@@ -1,0 +1,51 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+## Python Best Practices
+
+Follow these best practices when writing Python code for this project:
+
+1.  **PEP 8 Compliance:**
+    *   Adhere to the PEP 8 style guide for Python code. This includes naming conventions, code layout, and comments.
+    *   Use a linter (e.g., Flake8, Pylint) and auto-formatter (e.g., Black, Autopep8) to maintain consistent style.
+
+2.  **Type Hinting:**
+    *   Use Python type hints for all function signatures and important variables.
+    *   This improves code readability, helps catch errors early, and aids static analysis.
+    *   Use the `typing` module as needed.
+
+3.  **Modularity and Readability:**
+    *   Write small, focused functions and classes.
+    *   Use clear and descriptive names for variables, functions, and classes.
+    *   Organize code into logical modules and packages.
+    *   Keep functions and methods reasonably short.
+
+4.  **Docstrings:**
+    *   Write clear and comprehensive docstrings for all modules, classes, functions, and methods. Follow PEP 257 conventions.
+    *   Explain what the code does, its parameters, and what it returns.
+
+5.  **Error Handling:**
+    *   Implement robust error handling using try-except blocks.
+    *   Handle specific exceptions rather than using a bare `except:`.
+    *   Log errors effectively for debugging.
+
+6.  **Virtual Environments:**
+    *   Always use a virtual environment (e.g., `venv`, `conda`) to manage project dependencies.
+    *   List dependencies in `requirements.txt`.
+
+7.  **List Comprehensions and Generators:**
+    *   Prefer list comprehensions and generator expressions for creating lists or iterating in a concise and readable way, where appropriate.
+    *   Use generators for large datasets to save memory.
+
+8.  **Context Managers:**
+    *   Use the `with` statement for resource management (e.g., file handling, locks) to ensure resources are properly acquired and released.
+
+9.  **Avoid Mutable Default Arguments:**
+    *   Be cautious with mutable default arguments in function definitions (e.g., `def func(a, my_list=[]):`). Use `None` as a default and initialize the mutable type inside the function if needed.
+
+10. **Imports:**
+    *   Organize imports clearly at the top of the file, grouped into standard library, third-party, and local application imports.
+    *   Avoid wildcard imports (`from module import *`).
+

@@ -1,0 +1,46 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+## GitHub Actions Best Practices
+
+When developing GitHub Actions workflows, especially reusable ones, follow these best practices:
+
+1.  **Reusable Workflows (`workflow_call`):**
+    *   Design workflows to be reusable across multiple repositories.
+    *   Clearly define `inputs` and `secrets` required by the `workflow_call` trigger.
+    *   Provide sensible defaults for inputs where possible.
+
+2.  **Security:**
+    *   **Secrets Management:** Store sensitive data (AWS keys, API tokens) as encrypted secrets in GitHub. Never hardcode them.
+    *   **Permissions:** Grant workflows the minimum necessary permissions using the `permissions` key at the job or workflow level. For reusable workflows, the calling workflow's permissions are usually what apply, but be mindful of the token (`secrets.GITHUB_TOKEN` or a PAT) being used.
+    *   **Third-party Actions:** Pin actions to a specific commit SHA rather than a branch or tag to mitigate the risk of supply chain attacks (e.g., `actions/checkout@v3.0.2` is better than `actions/checkout@v3`).
+    *   **Token Exposure:** Be cautious about exposing `GITHUB_TOKEN` or other tokens to scripts or logging them.
+
+3.  **Efficiency and Performance:**
+    *   **Runners:** Choose appropriate runners (`ubuntu-latest`, `windows-latest`, etc.). Linux runners are generally faster and cheaper.
+    *   **Caching:** Use `actions/cache` to cache dependencies (e.g., Python packages, Docker layers) to speed up workflow runs.
+    *   **Concurrency:** Use `concurrency` groups to manage workflow runs, preventing multiple runs for the same PR or branch if not desired.
+    *   **Matrix Builds:** Use matrix strategies for testing across multiple versions or platforms, but be mindful of the number of jobs created.
+
+4.  **Workflow Structure and Readability:**
+    *   **Naming:** Use clear and descriptive names for workflows, jobs, and steps.
+    *   **Modularity:** Break down complex workflows into smaller, manageable jobs. A job should ideally represent a logical unit of work.
+    *   **Environment Variables:** Use environment variables (`env` context) for configuration that might change or is used in multiple steps.
+    *   **Comments:** Add comments in the YAML file to explain complex steps or non-obvious logic.
+
+5.  **Error Handling and Debugging:**
+    *   **Explicit Error Checks:** Add steps to check for errors explicitly if a command doesn't automatically fail the step (e.g., using `if: failure()`).
+    *   **Logging:** Ensure scripts within actions produce clear and useful logs. Avoid overly verbose logging that pollutes output.
+    *   **Artifacts:** Upload artifacts (e.g., test reports, logs) for debugging failed runs.
+
+6.  **Dependencies:**
+    *   Clearly specify versions for actions and tools used (e.g., `python-version`).
+    *   If the workflow relies on external scripts in the repository, ensure they are versioned and tested.
+
+7.  **Documentation (for reusable workflows):**
+    *   Provide clear `README.md` documentation for how to use the reusable workflow, including required inputs, secrets, permissions, and example usage.
+
+By adhering to these practices, workflows will be more secure, efficient, maintainable, and easier to debug.
+

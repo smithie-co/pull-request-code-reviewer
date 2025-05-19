@@ -1,0 +1,4 @@
+PyGithub
+boto3
+python-dotenv
+pytest 
