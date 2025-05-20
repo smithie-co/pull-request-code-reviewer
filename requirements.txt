@@ -1,4 +1,5 @@
 PyGithub
 boto3
 python-dotenv
-pytest 
+pytest
+tree-sitter 

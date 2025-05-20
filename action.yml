@@ -1,0 +1,53 @@
+name: 'AI Code Reviewer Action'
+description: 'Performs an AI-powered code review on pull requests using AWS Bedrock.'
+inputs:
+  aws_region:
+    description: 'AWS Region for Bedrock service'
+    required: true
+  heavy_model_id:
+    description: 'Bedrock Model ID for detailed code analysis'
+    required: true
+  light_model_id:
+    description: 'Bedrock Model ID for summarizing changes'
+    required: true
+  deepseek_model_id: # Name kept from plan, can be any model for refinement
+    description: 'Bedrock Model ID for refining heavy model output'
+    required: true
+  calling_repo_token: # Optional token
+    description: 'Optional token for actions in the calling repository if GITHUB_TOKEN is insufficient. Typically, the calling workflow GITHUB_TOKEN should have pull-requests: write and contents: read.'
+    required: false
+  github_token:
+    description: 'GitHub token for interacting with the repository (e.g., posting comments). Defaults to github.token.'
+    required: false # Technically true, but usually provided by default
+    default: ${{ github.token }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout Action Code
+      uses: actions/checkout@v4 # Checks out the action's own repository
+      with:
+        persist-credentials: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12' # Or your desired Python version
+
+    - name: Install Dependencies
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r ${{ github.action_path }}/requirements.txt
+
+    - name: Run AI Code Review
+      shell: bash
+      run: python ${{ github.action_path }}/src/main.py
+      env:
+        PYTHONUNBUFFERED: "1"
+        AWS_DEFAULT_REGION: ${{ inputs.aws_region }}
+        HEAVY_MODEL_ID: ${{ inputs.heavy_model_id }}
+        LIGHT_MODEL_ID: ${{ inputs.light_model_id }}
+        DEEPSEEK_MODEL_ID: ${{ inputs.deepseek_model_id }}
+        CALLING_REPO_TOKEN: ${{ inputs.calling_repo_token }}
+        GITHUB_TOKEN: ${{ inputs.github_token }} # Pass the token to the script 

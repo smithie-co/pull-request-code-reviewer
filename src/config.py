@@ -22,9 +22,6 @@ GITHUB_EVENT_PATH: Optional[str] = os.getenv("GITHUB_EVENT_PATH")
 GITHUB_TOKEN: Optional[str] = os.getenv("GITHUB_TOKEN")
 # This is the token for the repository dispatching the workflow_call event or the GITHUB_TOKEN of the reusable workflow itself.
 
-CALLING_REPO_TOKEN: Optional[str] = os.getenv("CALLING_REPO_TOKEN")
-# Optional: A separate token for actions in the calling repository if GITHUB_TOKEN is insufficient.
-
 # Bot Configuration
 BOT_NAME: Optional[str] = os.getenv("BOT_NAME", "github-actions[bot]") # Default to common GH Actions bot name
 

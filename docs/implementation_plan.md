@@ -2,11 +2,11 @@
 
 ## 1. Overview
 
-This document outlines the plan to create a reusable GitHub workflow that leverages AWS Bedrock language models to analyze pull requests. The workflow will provide a summary of changes and a deeper analysis of the code modifications.
+This document outlines the plan to create a GitHub Action that leverages AWS Bedrock language models to analyze pull requests. The Action will provide a summary of changes and a deeper analysis of the code modifications.
 
 ## 2. Goals
 
-*   Create a reusable GitHub workflow.
+*   Create a GitHub Action publishable to the Marketplace.
 *   Integrate with AWS Bedrock for AI-driven code analysis.
 *   Use `PyGithub` for GitHub API interactions.
 *   Follow SOLID principles and Python best practices.
@@ -15,42 +15,33 @@ This document outlines the plan to create a reusable GitHub workflow that levera
 
 ## 3. Core Components
 
-### 3.1. Reusable GitHub Workflow (`.github/workflows/pr_code_review.yml`)
+### 3.1. GitHub Action (`action.yml`)
 
-*   **Trigger:** `on: workflow_call`
-*   **Inputs:**
-    *   `github_token`: (Required) `secrets.GITHUB_TOKEN` for authenticating API calls.
-    *   `aws_access_key_id`: (Required) AWS access key ID.
-    *   `aws_secret_access_key`: (Required) AWS secret access key.
-    *   `aws_region`: (Required) AWS region for Bedrock.
-    *   `heavy_model_id`: (Required, default from calling repo's secrets or vars) ID for the Bedrock model for deep code analysis.
-    *   `light_model_id`: (Required, default from calling repo's secrets or vars) ID for the Bedrock model for summarizing changes.
-    *   `deepseek_model_id`: (Required, default from calling repo's secrets or vars) ID for the Bedrock model to analyze the heavy model's output.
-    *   `calling_repo_token`: (Optional) A token with permissions to the calling repository if `GITHUB_TOKEN` is not sufficient (e.g., for posting comments from a separate app).
-*   **Environment:** Runs on `ubuntu-latest`.
-*   **Steps:**
-    1.  Checkout the pull request code from the calling repository.
-    2.  Checkout this reviewer workflow's repository code.
-    3.  Set up Python environment.
-    4.  Install Python dependencies (`requirements.txt`).
-    5.  Set environment variables for AWS credentials and model IDs from workflow inputs/secrets.
-        *   `HEAVY_MODEL_ENV_VAR`: `inputs.heavy_model_id`
-        *   `LIGHT_MODEL_ENV_VAR`: `inputs.light_model_id`
-        *   `DEEPSEEK_MODEL_ENV_VAR`: `inputs.deepseek_model_id`
-        *   `AWS_ACCESS_KEY_ID`: `inputs.aws_access_key_id`
-        *   `AWS_SECRET_ACCESS_KEY`: `inputs.aws_secret_access_key`
-        *   `AWS_DEFAULT_REGION`: `inputs.aws_region`
-        *   `GITHUB_EVENT_PATH`: Path to the event payload JSON.
-        *   `GITHUB_TOKEN_ENV_VAR`: `inputs.github_token`
-        *   `CALLING_REPO_TOKEN_ENV_VAR`: `inputs.calling_repo_token` (if provided)
-    6.  Execute the Python application (`src/main.py`).
+*   **`name`**: 'AI Code Reviewer Action'
+*   **`description`**: 'Performs an AI-powered code review on pull requests using AWS Bedrock.'
+*   **Inputs (defined in `action.yml`):**
+    *   `aws_region`: (Required) AWS Region for Bedrock service.
+    *   `heavy_model_id`: (Required) Bedrock Model ID for detailed code analysis.
+    *   `light_model_id`: (Required) Bedrock Model ID for summarizing changes.
+    *   `deepseek_model_id`: (Required) Bedrock Model ID for refining heavy model output.
+    *   `calling_repo_token`: (Optional) Alternative GitHub token.
+    *   `github_token`: (Optional, default: `${{ github.token }}`) GitHub token for repository interactions.
+*   **Runs (Composite Action):**
+    *   `using: "composite"`
+    *   **Steps:**
+        1.  `actions/checkout@v4`: Checks out the action's own repository code (where `action.yml`, `src/main.py`, `requirements.txt` live).
+        2.  `actions/setup-python@v5`: Sets up the Python environment.
+        3.  Install Python dependencies from `${{ github.action_path }}/requirements.txt`.
+        4.  Execute the Python application (`python ${{ github.action_path }}/src/main.py`).
+            *   Environment variables for the script are set using `inputs` (e.g., `AWS_DEFAULT_REGION: ${{ inputs.aws_region }}`, `GITHUB_TOKEN: ${{ inputs.github_token }}`).
+*   **Note**: The calling workflow will still need to checkout its own code if the review is to be performed on that code.
 
 ### 3.2. Python Application (`src/`)
 
 *   **`main.py`**:
     *   Entry point of the application.
     *   Parses GitHub event payload to get PR details (PR number, repository owner/name, changed files, diff).
-    *   Retrieves AWS credentials and model IDs from environment variables.
+    *   Retrieves AWS credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` provided by the calling workflow's environment) and model IDs from environment variables (set by `action.yml` from its inputs).
     *   Orchestrates the analysis process.
     *   Handles error reporting and graceful exit.
 *   **`github_handler.py`**:
@@ -97,9 +88,7 @@ This document outlines the plan to create a reusable GitHub workflow that levera
 
 ```
 pull-request-code-reviewer/
-├── .github/
-│   └── workflows/
-│       └── pr_code_review.yml
+├── action.yml          # GitHub Action definition
 ├── .env              # For local development (contains dummy or dev AWS keys & model IDs, in .gitignore)
 ├── .gitignore
 ├── docs/
@@ -134,7 +123,7 @@ pull-request-code-reviewer/
 
 ## 6. Secrets and Configuration Management
 
-*   **GitHub Workflow:**
+*   **GitHub Action:**
     *   AWS Credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`) will be passed as secrets to the reusable workflow from the calling repository.
     *   Bedrock Model IDs (`HEAVY_MODEL_ID`, `LIGHT_MODEL_ID`, `DEEPSEEK_MODEL_ID`) will also be passed as secrets or workflow variables from the calling repository.
     *   `GITHUB_TOKEN` is automatically available.
@@ -150,7 +139,7 @@ pull-request-code-reviewer/
 4.  **Implement `github_handler.py`**: Core GitHub interaction logic. Write unit tests.
 5.  **Implement `analysis_service.py`**: Logic for prompting and processing model outputs. Write unit tests.
 6.  **Implement `main.py`**: Orchestrate the workflow. Write integration tests.
-7.  **Develop `pr_code_review.yml`**: Define the reusable workflow.
+7.  **Develop `action.yml`**: Define the GitHub Action.
 8.  **Testing:**
     *   Run unit tests locally using `pytest`.
     *   Manually test the workflow with a test repository.

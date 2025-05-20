@@ -1,6 +1,6 @@
 # AI-Powered Pull Request Code Reviewer
 
-This project provides a reusable GitHub Action workflow that leverages AI, specifically AWS Bedrock language models, to automatically review pull requests. It posts a comment on the PR detailing a summary of changes and an in-depth analysis of potential issues, adherence to best practices, style concerns, and suggestions for improvement.
+This project provides a GitHub Action that leverages AI, specifically AWS Bedrock language models, to automatically review pull requests. It posts a comment on the PR detailing a summary of changes and an in-depth analysis of potential issues, adherence to best practices, style concerns, and suggestions for improvement.
 
 ## Features
 
@@ -18,8 +18,8 @@ The following diagram illustrates the automated pull request review process:
     ```mermaid
     graph TD
         A[PR Event in User Repo: Opened, Reopened, Synchronize] --> B{Calling Workflow};
-        B -- Invokes with Inputs & Env Secrets --> C[Reusable Workflow: .github/workflows/pr_code_review.yml];
-        C --> D[1. Checkout Reviewer Code & Setup Python];
+        B -- Invokes with Inputs & Env Secrets --> C[Custom Action: action.yml in YOUR_ORG/pull-request-code-reviewer];
+        C --> D[1. Checkout Action Code & Setup Python];
         D --> E[2. Install Dependencies from requirements.txt];
         E --> F[3. Execute Python Script: src/main.py];
 
@@ -45,13 +45,13 @@ The following diagram illustrates the automated pull request review process:
 
 ## Technical Overview
 
-The solution is architected as a reusable GitHub Action workflow that orchestrates a Python application to perform AI-driven code reviews.
+The solution is architected as a GitHub Action that orchestrates a Python application to perform AI-driven code reviews.
 
-### Workflow Execution (`.github/workflows/pr_code_review.yml`)
+### Action Execution (`action.yml`)
 
-    1.  **Trigger**: The workflow is designed to be called by other workflows (`workflow_call`) typically triggered by `pull_request` events (e.g., `opened`, `reopened`, `synchronize`) in the consuming repository.
-    2.  **Inputs**: It accepts `aws_region`, `heavy_model_id`, `light_model_id`, `deepseek_model_id`, and an optional `calling_repo_token`.
-    3.  **Secrets**: Sensitive information like `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `GITHUB_TOKEN` are expected to be set as environment variables by the calling workflow. This aligns with security best practices by keeping secret management within the caller's context.
+    1.  **Trigger**: The Action is designed to be used as a step in workflows, typically triggered by `pull_request` events (e.g., `opened`, `reopened`, `synchronize`) in the consuming repository.
+    2.  **Inputs**: It accepts `aws_region`, `heavy_model_id`, `light_model_id`, `deepseek_model_id`, `github_token` (defaults to `github.token`), and an optional `calling_repo_token`.
+    3.  **Secrets**: Sensitive information like `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` are expected to be set as environment variables by the calling workflow. This aligns with security best practices by keeping secret management within the caller's context.
     4.  **Environment Setup**:
         *   Checks out the reviewer's source code (this repository).
         *   Sets up the specified Python version (e.g., 3.12).
@@ -99,10 +99,10 @@ The core logic resides in the `src/` directory:
 
 ## How to Use
 
-This is a reusable workflow. To integrate it into your repository:
+This is a GitHub Action. To integrate it into your repository:
 
     1.  Create a workflow file (e.g., `.github/workflows/ai_code_reviewer.yml`) in your repository.
-    2.  Define a job that calls this reusable workflow. You must provide necessary AWS credentials and the GitHub token as environment variables to this job.
+    2.  Define a job that uses this Action as a step. You must provide necessary AWS credentials as environment variables and the required inputs to the Action.
 
 **Example Calling Workflow:**
 
@@ -130,29 +130,34 @@ This is a reusable workflow. To integrate it into your repository:
         # BOT_NAME: "my-custom-bot[bot]"
 
         steps:
-        - name: Run AI Code Review
-            uses: YOUR_USERNAME_OR_ORG/pull-request-code-reviewer/.github/workflows/pr_code_review.yml@main # Replace with your repo and pin to a SHA/tag
-            with:
+        - name: Checkout code
+          uses: actions/checkout@v4 # Important to checkout the code to be reviewed
+
+        - name: Run AI Code Review Action
+          uses: YOUR_USERNAME_OR_ORG/pull-request-code-reviewer@main # Replace with your repo and pin to a SHA/tag
+          with:
             aws_region: "us-east-1"  # Your AWS Bedrock region
             heavy_model_id: "anthropic.claude-v2"
             light_model_id: "anthropic.claude-instant-v1"
             deepseek_model_id: "meta.llama2-13b-chat-v1" # Or your preferred model for refinement
             # calling_repo_token: ${{ secrets.PAT_FOR_SPECIFIC_TASKS }} # Optional
+            # github_token: ${{ secrets.GITHUB_TOKEN }} # Defaults to github.token, usually sufficient
     ``` 
 
-Replace `YOUR_USERNAME_OR_ORG/pull-request-code-reviewer` with the path to this repository. Pinning to a specific commit SHA or tag (e.g., `@v1.0.0`) is highly recommended for stability.
+Replace `YOUR_USERNAME_OR_ORG/pull-request-code-reviewer` with the path to this repository (e.g., `your-org/your-repo-name`). Pinning to a specific commit SHA or tag (e.g., `@v1.0.0`) is highly recommended for stability.
 
-### Workflow Inputs (`pr_code_review.yml`)
+### Action Inputs (`action.yml`)
 
     *   `aws_region` (required, string): The AWS region where your Bedrock models are located (e.g., `us-east-1`).
     *   `heavy_model_id` (required, string): The Bedrock model ID for comprehensive code analysis (e.g., `anthropic.claude-v2`).
     *   `light_model_id` (required, string): The Bedrock model ID for summarizing PR changes (e.g., `anthropic.claude-instant-v1`).
     *   `deepseek_model_id` (required, string): The Bedrock model ID for refining the output of the heavy analysis model (e.g., `meta.llama2-13b-chat-v1`).
-    *   `calling_repo_token` (optional, string): An alternative GitHub token (e.g., a PAT). If provided, this token will be prioritized over `GITHUB_TOKEN` for GitHub API calls made by the Python script. Useful if specific permissions beyond the standard `GITHUB_TOKEN` are required.
+    *   `calling_repo_token` (optional, string): An alternative GitHub token (e.g., a PAT). If provided, this token will be prioritized over `github_token` for GitHub API calls made by the Python script. Useful if specific permissions beyond the standard `GITHUB_TOKEN` are required.
+    *   `github_token` (optional, string, default: `${{ github.token }}`): The GitHub token used for interacting with the repository (e.g., posting comments). The default `github.token` usually has sufficient permissions if the job is configured correctly.
 
 ### Required Permissions for the Calling Workflow's Job
 
-The job in your calling workflow that invokes this reusable workflow needs at least the following permissions:
+The job in your calling workflow that uses this Action needs at least the following permissions:
 
     ```yaml
     permissions:
@@ -178,26 +183,20 @@ Ensure the `GITHUB_TOKEN` provided to the job (or the custom PAT if used) has th
         ```bash
         pip install -r requirements.txt
         ```
-    4.  **Set up Environment Variables (`.env` file):**
-        Create a `.env` file in the project root. This file is ignored by Git (`.gitignore`). Populate it with:
-        ```env
-        GITHUB_TOKEN="your_github_pat_with_repo_scope"
-        # Path to a sample JSON payload for a GitHub pull_request event.
-        # See: https://docs.github.com/en/webhooks-and-events/webhooks/webhook-events-and-payloads#pull_request
-        GITHUB_EVENT_PATH="path/to/your/sample_event.json"
-        GITHUB_REPOSITORY="your_username/your_test_repo" # e.g., octocat/Hello-World
-
-        AWS_ACCESS_KEY_ID="your_aws_access_key_id"
-        AWS_SECRET_ACCESS_KEY="your_aws_secret_access_key"
-        AWS_DEFAULT_REGION="your_aws_region" # e.g., us-east-1
-
-        HEAVY_MODEL_ID="anthropic.claude-v2"
-        LIGHT_MODEL_ID="anthropic.claude-instant-v1"
-        DEEPSEEK_MODEL_ID="meta.llama2-13b-chat-v1"
-        # BOT_NAME="local-dev-bot[bot]" # Optional
+    4.  **Set up Environment Variables for Local Development:**
+        Copy the example environment file `summary.env.example` to a new file named `.env` in the project root:
+        ```bash
+        cp summary.env.example .env
         ```
-        *   Ensure your `GITHUB_TOKEN` (Personal Access Token) has `repo` scope for reading repository data and `pull_requests:write` if you intend to test comment posting locally against a real PR (not recommended for automated local runs without careful targeting).
-        *   A `sample_event.json` can be created by capturing a real `pull_request` webhook payload.
+        Then, open the `.env` file and replace all placeholder values (like `"your_aws_access_key_id"`, `"path/to/your/sample_event.json"`, etc.) with your actual credentials and configuration details. This `.env` file is listed in `.gitignore` and will not be committed to the repository.
+
+        **Contents of `.env` will include:**
+        *   `GITHUB_TOKEN`: Your personal GitHub access token with `repo` scope (and `pull_requests:write` if testing comment posting).
+        *   `GITHUB_EVENT_PATH`: Path to a local JSON file containing a sample GitHub `pull_request` event payload. You can obtain this by triggering a pull request in a test repository and capturing the webhook payload sent by GitHub.
+        *   `GITHUB_REPOSITORY`: The slug of your test repository (e.g., `your_username/your_test_repo`).
+        *   `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`: Your AWS credentials and the region for Bedrock.
+        *   `HEAVY_MODEL_ID`, `LIGHT_MODEL_ID`, `DEEPSEEK_MODEL_ID`: The specific Bedrock model IDs you intend to use for testing.
+        *   Optional variables like `CALLING_REPO_TOKEN` and `BOT_NAME` can also be set if needed.
 
     5.  **Run the Main Script:**
         ```bash
@@ -213,7 +212,7 @@ Execute unit tests using Pytest:
 
 ## Project Structure
 
-    *   `.github/workflows/pr_code_review.yml`: The reusable GitHub Action workflow definition.
+    *   `action.yml`: The GitHub Action definition.
     *   `src/`: Contains the core Python application logic.
         *   `main.py`: Main script orchestrating the review.
         *   `config.py`: Handles loading of environment variables and configuration.
