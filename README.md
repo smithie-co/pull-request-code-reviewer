@@ -24,9 +24,9 @@ The following diagram illustrates the automated pull request review process:
         E --> F[3. Execute Python Script: src/main.py];
 
         subgraph "Python Application Logic (src/)"
-            F --> G["a. Load Configuration (config.py):\n- Workflow inputs (AWS region, model IDs)\n- Env Vars (AWS Keys, GitHub Token)"];
-            G --> H["b. Initialize Handlers:\n- GithubHandler (for GitHub API)\n- BedrockHandler (for AWS Bedrock API)"];
-            H --> I["c. GithubHandler: Fetch PR Details\n- Diff, changed files, metadata using GITHUB_TOKEN"];
+            F --> G["a. Load Configuration (config.py):<br>- Workflow inputs (AWS region, model IDs)<br>- Env Vars (AWS Keys, GitHub Token)"];
+            G --> H["b. Initialize Handlers:<br>- GithubHandler (for GitHub API)<br>- BedrockHandler (for AWS Bedrock API)"];
+            H --> I["c. GithubHandler: Fetch PR Details<br>- Diff, changed files, metadata using GITHUB_TOKEN"];
             I --> J[d. AnalysisService: Orchestrate Review];
             J -- Uses light_model_id --> K[BedrockHandler: Request Change Summary];
             K -- Invokes --> L[AWS Bedrock];
@@ -34,7 +34,7 @@ The following diagram illustrates the automated pull request review process:
             M -- Invokes --> L;
             J -- Uses deepseek_model_id --> N[BedrockHandler: Request Analysis Refinement];
             N -- Invokes --> L;
-            O["e. Compile Review:\n- Summary\n- Detailed Findings\n- Refinements"];
+            O["e. Compile Review:<br>- Summary<br>- Detailed Findings<br>- Refinements"];
             K --> O;
             M --> O;
             N --> O;
