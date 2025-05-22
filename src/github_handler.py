@@ -422,3 +422,63 @@ class GithubHandler:
         except Exception as e:
             logger.error(f"Unexpected error updating PR #{pr_number} description: {e}")
             raise RuntimeError(f"Unexpected error updating PR description: {str(e)}") from e
+
+    def delete_review_line_comments(self, pr_number: int, review_id: int, repo_name_override: Optional[str] = None) -> bool:
+        """
+        Deletes all line comments associated with a specific review.
+
+        Args:
+            pr_number: The pull request number.
+            review_id: The ID of the review whose line comments should be deleted.
+            repo_name_override: Optional repository name to override the one set during init.
+
+        Returns:
+            True if all comments were attempted to be deleted (some may fail individually),
+            False if the review itself couldn't be fetched.
+        """
+        target_repo_name = repo_name_override or self.repo_name
+        if not target_repo_name:
+            raise ValueError("Repository name is not set. Cannot fetch review to delete its comments.")
+        
+        logger.info(f"Attempting to delete line comments for review ID {review_id} on PR #{pr_number}.")
+        try:
+            repo = self.gh.get_repo(target_repo_name)
+            # Need the PR object to get a review by ID, PyGithub doesn't have repo.get_review(id)
+            pr = repo.get_pull(pr_number)
+            review_to_clear = pr.get_review(review_id)
+            if not review_to_clear:
+                logger.warning(f"Could not find review with ID {review_id} on PR #{pr_number}. Cannot delete its comments.")
+                return False
+
+            line_comments = list(review_to_clear.get_comments())
+            if not line_comments:
+                logger.info(f"Review ID {review_id} has no line comments to delete.")
+                return True
+
+            logger.info(f"Found {len(line_comments)} line comments to delete for review ID {review_id}.")
+            deletion_success_count = 0
+            deletion_failure_count = 0
+            for comment in line_comments:
+                try:
+                    comment.delete()
+                    logger.debug(f"Successfully deleted comment ID {comment.id} from review ID {review_id}.")
+                    deletion_success_count += 1
+                except GithubException as e:
+                    deletion_failure_count +=1
+                    logger.error(f"Failed to delete comment ID {comment.id} (from review ID {review_id}): {e.status} {e.data.get('message')}")
+            
+            if deletion_failure_count > 0:
+                logger.warning(f"Finished attempting to delete comments for review ID {review_id}: {deletion_success_count} succeeded, {deletion_failure_count} failed.")
+            else:
+                logger.info(f"Successfully deleted all {deletion_success_count} line comments for review ID {review_id}.")
+            return True # Operation attempted for all found comments
+
+        except UnknownObjectException:
+            logger.warning(f"Could not find PR #{pr_number} or review ID {review_id} in repository {target_repo_name} when trying to delete comments.")
+            return False
+        except GithubException as e:
+            logger.error(f"GitHub API error while trying to delete comments for review ID {review_id} on PR #{pr_number}: {e.status} {e.data.get('message')}")
+            return False # Indicate overall failure to process deletions
+        except Exception as e:
+            logger.error(f"Unexpected error while deleting comments for review ID {review_id}: {e}", exc_info=True)
+            return False

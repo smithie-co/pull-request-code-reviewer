@@ -109,6 +109,12 @@ def main():
                 dismiss_message = f"Dismissing old review as new commits have been pushed. Current head: {current_head_sha}."
                 if github_h.dismiss_review(last_bot_review, dismiss_message):
                     logger.info(f"Successfully dismissed previous review ID {last_bot_review.id}.")
+                    # Attempt to delete the line comments from the dismissed review
+                    logger.info(f"Attempting to delete line comments from dismissed review ID {last_bot_review.id}.")
+                    if github_h.delete_review_line_comments(pr_number=pr_number, review_id=last_bot_review.id):
+                        logger.info(f"Successfully initiated deletion of line comments for review ID {last_bot_review.id}.")
+                    else:
+                        logger.warning(f"Failed to initiate deletion of line comments for review ID {last_bot_review.id}. Some old comments might remain visible.")
                 else:
                     logger.warning(f"Failed to dismiss previous review ID {last_bot_review.id} or it was already dismissed.")
             else:
