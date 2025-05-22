@@ -150,10 +150,28 @@ class BedrockHandler:
             }
             if top_k is not None:
                 body_params["k"] = top_k # Cohere uses 'k' for top_k
-        # Basic check for deepseek or other models not explicitly handled
-        # This assumes a Claude-like structure as a fallback, which might be incorrect.
-        # It's better to have explicit handling or clear documentation for new models.
-        elif "deepseek" in model_id.lower() or "meta.llama" in model_id.lower(): # Llama2 also Claude-like (for text completion style)
+        elif "deepseek" in model_id.lower():
+            # DeepSeek uses a specific prompt format and text completion style API
+            # The prompt passed to this function should be the raw user query.
+            # IMPORTANT: The prompt for DeepSeek needs to be stripped of "Human: " and "Assistant: " if present,
+            # as those are part of its special token sequence.
+            clean_prompt = prompt
+            if prompt.startswith("Human: "):
+                clean_prompt = prompt[len("Human: "):]
+            if "\n\nAssistant:" in clean_prompt: # Check before stripping, to handle prompts not ending with it
+                assistant_cue_index = clean_prompt.rfind("\n\nAssistant:")
+                clean_prompt = clean_prompt[:assistant_cue_index]
+            
+            formatted_prompt = f"<｜begin of sentence｜> {clean_prompt.strip()} <｜Assistant｜><think>\n\n"
+            body_params = {
+                "prompt": formatted_prompt,
+                "max_tokens": max_tokens, # DeepSeek uses "max_tokens"
+                "temperature": temperature,
+                "top_p": top_p,
+            }
+            # DeepSeek also supports a "stop" parameter (array of strings), not currently used here.
+            # e.g. "stop": ["<｜end of sentence｜>"]
+        elif "meta.llama" in model_id.lower(): # Llama2 also Claude-like (for text completion style)
             # Note: Llama 3 might prefer a messages-like API too. This might need further generalization.
             logger.warning(f"Using Anthropic Claude (legacy Text Completions) like structure for model: {model_id}. This may need adjustment.")
             body_params = {
@@ -195,7 +213,7 @@ class BedrockHandler:
         elif "anthropic.claude" in model_id or \
            ("deepseek" in model_id.lower() and "completion" in response_body_json) or \
            ("meta.llama" in model_id.lower() and "generation" in response_body_json): # Llama2 specific
-            if "completion" in response_body_json: # Claude (legacy), some DeepSeek
+            if "completion" in response_body_json: # Claude (legacy), some older non-Claude with this key
                 generated_text = response_body_json.get('completion')
             elif "generation" in response_body_json: # Llama2
                 generated_text = response_body_json.get('generation')
@@ -214,6 +232,16 @@ class BedrockHandler:
             generations = response_body_json.get('generations', [])
             if generations and isinstance(generations, list) and len(generations) > 0:
                 generated_text = generations[0].get('text')
+        elif "deepseek" in model_id.lower(): # Specific extraction for DeepSeek
+            choices = response_body_json.get('choices', [])
+            if choices and isinstance(choices, list) and len(choices) > 0:
+                first_choice = choices[0]
+                if isinstance(first_choice, dict):
+                    generated_text = first_choice.get('text')
+                else:
+                    logger.warning(f"First choice in DeepSeek response is not a dict: {first_choice}")
+            else:
+                logger.warning(f"No 'choices' or empty/malformed 'choices' array found in DeepSeek model {model_id} response: {response_body_json}")
         else:
             # Attempt a generic extraction if model family is unknown or has multiple possible keys
             possible_keys = ['completion', 'generated_text', 'text', 'outputText', 'generation']
