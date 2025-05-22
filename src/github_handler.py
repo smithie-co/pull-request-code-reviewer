@@ -262,7 +262,7 @@ class GithubHandler:
             logger.error(f"Unexpected error dismissing review ID {review.id}: {e}")
             raise RuntimeError(f"Unexpected error dismissing review: {str(e)}") from e
     
-    def post_pr_review(self, pr_number: int, review_body: str, event: str = 'COMMENT',
+    def post_pr_review(self, pr_number: int, review_body: str, event: str = None,
                        commit_id: Optional[str] = None, repo_name_override: Optional[str] = None,
                        line_comments: Optional[List[Dict[str, Any]]] = None) -> Optional[PullRequestReview]:
         """
@@ -342,7 +342,7 @@ class GithubHandler:
             review = pr.create_review(
                 commit=commit_obj,
                 body=main_review_body,
-                event=event,
+                event=event if event else None,
                 comments=processed_line_comments if processed_line_comments else []
             )
             logger.info(f"Successfully posted a '{event}' review to PR #{pr_number}. Review ID: {review.id}")

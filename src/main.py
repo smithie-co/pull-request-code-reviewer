@@ -103,7 +103,7 @@ def main():
 
         if last_bot_review:
             logger.info(f"Last bot review found: ID {last_bot_review.id}, Commit SHA: {last_bot_review.commit_id}")
-            if last_bot_review.commit_id != current_head_sha:
+            if last_bot_review.commit_id != current_head_sha and (last_bot_review.state != "DISMISSED" or last_bot_review.state != "COMMENTED"):
                 logger.info(f"New commits detected since last bot review (last: {last_bot_review.commit_id}, current: {current_head_sha}). Dismissing old review.")
                 dismiss_message = f"Dismissing old review as new commits have been pushed. Current head: {current_head_sha}."
                 if github_h.dismiss_review(last_bot_review, dismiss_message):
@@ -111,7 +111,12 @@ def main():
                 else:
                     logger.warning(f"Failed to dismiss previous review ID {last_bot_review.id} or it was already dismissed.")
             else:
-                logger.info("No new commits since last bot review. A new review might duplicate comments unless content has changed significantly.")
+                if last_bot_review.state == "DISMISSED":
+                    logger.info("Last bot review was dismissed. Proceeding with new review.")
+                elif last_bot_review.state == "COMMENTED":
+                    logger.info("Last bot review was a comment which the Git api does not allow to be dismissed. Proceeding with new review.")
+                else:
+                    logger.info("No new commits since last bot review. A new review might duplicate comments unless content has changed significantly.")
         else:
             logger.info("No previous reviews by this bot found for this PR.")
 
@@ -197,7 +202,7 @@ def main():
             pr_number=pr_number,
             review_body=review_body_text,
             commit_id=current_head_sha,
-            event='COMMENT', 
+            event=None, 
             line_comments=line_specific_comments_for_review
         )
 
