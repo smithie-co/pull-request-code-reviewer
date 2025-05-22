@@ -44,6 +44,7 @@ runs:
       shell: bash
       run: python ${{ github.action_path }}/src/main.py
       env:
+        PYTHONPATH: ${{ github.action_path }} # Add action root to PYTHONPATH
         PYTHONUNBUFFERED: "1"
         AWS_DEFAULT_REGION: ${{ inputs.aws_region }}
         HEAVY_MODEL_ID: ${{ inputs.heavy_model_id }}
