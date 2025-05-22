@@ -142,24 +142,44 @@ Assistant:JSON Output:"""
             
             logger.debug(f"Raw structured output from model {deepseek_model_id}: {raw_structured_output}")
             
+            # Attempt to extract JSON, handling potential markdown code blocks
+            json_str_to_parse = raw_structured_output.strip()
+
+            if json_str_to_parse.startswith("```json"):
+                json_str_to_parse = json_str_to_parse[len("```json"):].strip()
+                if json_str_to_parse.endswith("```"):
+                    json_str_to_parse = json_str_to_parse[:-len("```")].strip()
+            elif json_str_to_parse.startswith("```"):
+                json_str_to_parse = json_str_to_parse[len("```"):].strip()
+                if json_str_to_parse.endswith("```"):
+                    json_str_to_parse = json_str_to_parse[:-len("```")].strip()
+
+            # Ensure it looks like an array or object before trying to parse directly
+            # (though LLMs might just return the array without a full block sometimes)
+            # The main attempt is to clean the string and then try parsing.
+
             try:
-                # Try to parse the whole raw output first, in case the LLM behaves perfectly.
-                parsed_suggestions = json.loads(raw_structured_output)
+                # Try to parse the cleaned output
+                parsed_suggestions = json.loads(json_str_to_parse)
             except json.JSONDecodeError:
-                # If parsing the whole output fails, try to find a JSON array within the text.
-                json_start_index = raw_structured_output.find('[')
-                json_end_index = raw_structured_output.rfind(']')
+                # If parsing the cleaned output fails, try to find a JSON array within the text
+                logger.warning(f"Initial JSON parse of cleaned output failed. Trying to find array in: {json_str_to_parse[:200]}...") # Log snippet
+                json_start_index = json_str_to_parse.find('[')
+                json_end_index = json_str_to_parse.rfind(']')
+                
                 if json_start_index != -1 and json_end_index != -1 and json_start_index < json_end_index:
-                    json_str = raw_structured_output[json_start_index : json_end_index+1]
+                    extracted_json_str = json_str_to_parse[json_start_index : json_end_index+1]
+                    logger.debug(f"Attempting to parse extracted substring: {extracted_json_str[:200]}...")
                     try:
-                        parsed_suggestions = json.loads(json_str)
+                        parsed_suggestions = json.loads(extracted_json_str)
                     except json.JSONDecodeError as e_inner:
-                        logger.error(f"Failed to decode extracted JSON array from DeepSeek model output. Error: {e_inner}. Extracted: {json_str}")
-                        return [] # Return empty list on inner parsing failure
+                        logger.error(f"Failed to decode extracted JSON array. Error: {e_inner}. Extracted substring: {extracted_json_str[:500]}...")
+                        logger.error(f"Original raw output (first 500 chars) was: {raw_structured_output[:500]}...")
+                        return [] 
                 else:
-                    # This case means no valid JSON array delimiters were found after initial full parse failed.
-                    logger.warning(f"Could not find or parse JSON array in model output after initial parse failed. Output: {raw_structured_output}")
-                    return [] # Return empty list if no array found and initial parse failed
+                    logger.error(f"Could not find valid JSON array delimiters '[' and ']' in the model output after initial parse failed. Cleaned output was: {json_str_to_parse[:500]}...")
+                    logger.error(f"Original raw output (first 500 chars) was: {raw_structured_output[:500]}...")
+                    return []
 
             if not isinstance(parsed_suggestions, list):
                 logger.warning(f"Parsed JSON output is not a list as expected. Output: {parsed_suggestions}")
