@@ -202,7 +202,7 @@ def main():
             pr_number=pr_number,
             review_body=review_body_text,
             commit_id=current_head_sha,
-            event=None, 
+            event= "REQUEST_CHANGES" if len(line_specific_comments_for_review) > 0 else "APPROVE", 
             line_comments=line_specific_comments_for_review
         )
 
