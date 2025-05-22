@@ -323,3 +323,57 @@ Assistant:Release notes summary:"""
         except Exception as e:
             logger.error(f"Error during release notes generation (model: {light_model_id}): {e}")
             raise RuntimeError(f"Release notes generation failed: {e}") from e
+
+    def analyze_individual_file_diff(self, file_patch: str, filename: str, model_id_override: Optional[str] = None) -> str:
+        """
+        Analyzes a single file's diff content using the HEAVY_MODEL.
+
+        Args:
+            file_patch: The code diff/patch for the specific file.
+            filename: The name of the file being analyzed.
+            model_id_override: Optional Bedrock model ID to override the default HEAVY_MODEL_ID.
+
+        Returns:
+            The analysis result for the individual file.
+        
+        Raises:
+            ValueError: If file_patch or filename is empty, or model ID is not configured.
+            RuntimeError: If model invocation fails.
+        """
+        if not file_patch:
+            # This can happen for empty files or files with only mode changes etc.
+            logger.info(f"File patch for '{filename}' is empty. Skipping analysis for this file.")
+            return ""
+        if not filename:
+            raise ValueError("Filename cannot be empty for individual file analysis.")
+        
+        heavy_model_id = model_id_override or config.HEAVY_MODEL_ID
+        if not heavy_model_id:
+            raise ValueError(f"HEAVY_MODEL_ID is not configured for individual file analysis of '{filename}'.")
+
+        prompt = f"""Human: You are an expert code reviewer. Please analyze ONLY the following code changes for the file `{filename}`. 
+Focus on potential bugs, style issues, security vulnerabilities, and areas for improvement specific to these changes in this file. 
+Do not make assumptions about code outside this specific patch.
+
+File: `{filename}`
+<patch>
+{file_patch}
+</patch>
+
+Assistant:Analysis for file `{filename}`:"""
+        
+        logger.info(f"Analyzing individual file changes for: {filename} using model: {heavy_model_id}")
+        try:
+            analysis = self.bedrock_handler.invoke_model(
+                model_id=heavy_model_id,
+                prompt=prompt,
+                max_tokens=2048, # Max tokens can be adjusted based on expected analysis length per file
+                temperature=0.5  
+            )
+            return analysis
+        except Exception as e:
+            logger.error(f"Error during individual file analysis for '{filename}' (model: {heavy_model_id}): {e}")
+            # Don't let a single file analysis failure stop the whole PR review. Log and return empty.
+            # Or, re-raise if individual file failures should be critical.
+            # For now, returning empty string to allow process to continue for other files/overall review.
+            return f"Error analyzing file {filename}: {str(e)}" # Return error message in analysis

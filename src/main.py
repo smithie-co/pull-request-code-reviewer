@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import sys
+from typing import Dict
 
 from src import config # To ensure it's loaded, though individual configs are used directly
 from src.bedrock_handler import BedrockHandler
@@ -125,7 +126,7 @@ def main():
         # We need the combined diff for overall analysis and summarization.
         # Changed files list can be used if we want to iterate or provide per-file feedback later.
         pr_diff_content = github_h.get_pr_diff(pr_number=pr_number)
-        # changed_files = github_h.get_pr_changed_files(pr_number=pr_number)
+        changed_files = github_h.get_pr_changed_files(pr_number=pr_number)
 
         if not pr_diff_content:
             logger.info(f"No diff content found for PR #{pr_number}. This might be an empty PR or only non-code changes. Exiting gracefully.")
@@ -194,6 +195,31 @@ def main():
         else:
             logger.info("Skipping refined analysis for line comments as initial heavy analysis was not available or failed.")
         
+        # --- Perform Individual File Analysis ---
+        individual_file_analyses: Dict[str, str] = {}
+        if changed_files: # Ensure changed_files is populated
+            logger.info(f"Starting individual analysis for {len(changed_files)} changed files...")
+            for file_info in changed_files:
+                filename = file_info.get("filename")
+                file_patch = file_info.get("patch") # This is the diff for the individual file
+                
+                if filename and file_patch:
+                    try:
+                        logger.info(f"Performing analysis for file: {filename}")
+                        file_analysis_result = analysis_s.analyze_individual_file_diff(file_patch=file_patch, filename=filename)
+                        if file_analysis_result:
+                            individual_file_analyses[filename] = file_analysis_result
+                            logger.info(f"Completed analysis for file: {filename}. Result length: {len(file_analysis_result)}")
+                        else:
+                            logger.info(f"Analysis for file: {filename} returned no content.")
+                    except Exception as e:
+                        logger.error(f"Error during analysis of file {filename}: {e}. This file's analysis will be skipped.")
+                        individual_file_analyses[filename] = f"Could not analyze {filename} due to an error: {str(e)}"
+                elif filename and not file_patch:
+                    logger.info(f"Skipping analysis for file {filename} as it has no patch content (e.g., binary, renamed, or mode change only). ")        
+        else:
+            logger.info("No changed files data available to perform individual file analysis.")
+
         # --- Prepare Line-Specific Comments ---
         line_specific_comments_for_review = []
         if refined_analysis_results and isinstance(refined_analysis_results, list):
@@ -228,6 +254,12 @@ def main():
             refined_analysis=heavy_analysis, # Pass the raw heavy_analysis string for the detailed section
             heavy_analysis_raw=heavy_analysis if not refined_analysis_results else None 
         )
+
+        # Append individual file analyses to the review body
+        if individual_file_analyses:
+            review_body_text += "\n\n---\n### Per-File Analysis Details\n"
+            for filename, analysis_text in individual_file_analyses.items():
+                review_body_text += f"\n#### File: `{filename}`\n{analysis_text}\n"
 
         logger.info(f"Posting review to PR #{pr_number} on commit {current_head_sha}...")
         
