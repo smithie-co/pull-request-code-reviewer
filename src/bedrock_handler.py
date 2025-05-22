@@ -76,7 +76,42 @@ class BedrockHandler:
         """Helper to create the request body based on model provider."""
         body_params: Dict[str, Any]
 
-        if "anthropic.claude" in model_id:
+        if "anthropic.claude-3" in model_id: # Handle Claude 3 models with Messages API
+            # Extract user content from the "Human: ... Assistant: ..." prompt format
+            user_content = prompt
+            if prompt.startswith("Human: "):
+                user_content_start = len("Human: ")
+                # Find the last occurrence of Assistant cue in case of complex prompts
+                assistant_cue_index = prompt.rfind("\\n\\nAssistant:")
+                if assistant_cue_index != -1:
+                    user_content = prompt[user_content_start:assistant_cue_index].strip()
+                else:
+                    user_content = prompt[user_content_start:].strip()
+            else:
+                # If prompt doesn't follow Human:/Assistant: format, use as is, but log a warning.
+                logger.warning(f"Prompt for Claude 3 model '{model_id}' does not start with 'Human: '. Using the entire prompt as user content.")
+                user_content = prompt.strip()
+            
+            body_params = {
+                "anthropic_version": "bedrock-2023-05-31", # Required for Claude 3
+                "max_tokens": max_tokens, # Claude 3 uses "max_tokens"
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": user_content}]
+                    }
+                ]
+            }
+            # Optional parameters for Claude 3 Messages API
+            if temperature is not None: body_params["temperature"] = temperature
+            if top_p is not None: body_params["top_p"] = top_p
+            if top_k is not None: body_params["top_k"] = top_k
+            # System prompt can be added here if needed:
+            # system_prompt_text = "You are a helpful coding assistant." # Example
+            # if system_prompt_text:
+            #     body_params["system"] = system_prompt_text
+
+        elif "anthropic.claude" in model_id: # Older Claude models (v1, v2, instant)
             body_params = {
                 "prompt": prompt,
                 "max_tokens_to_sample": max_tokens,
@@ -118,10 +153,11 @@ class BedrockHandler:
         # Basic check for deepseek or other models not explicitly handled
         # This assumes a Claude-like structure as a fallback, which might be incorrect.
         # It's better to have explicit handling or clear documentation for new models.
-        elif "deepseek" in model_id.lower() or "meta.llama" in model_id.lower(): # Llama2 also Claude-like
-            logger.warning(f"Using Anthropic Claude-like structure for model: {model_id}. This may need adjustment.")
+        elif "deepseek" in model_id.lower() or "meta.llama" in model_id.lower(): # Llama2 also Claude-like (for text completion style)
+            # Note: Llama 3 might prefer a messages-like API too. This might need further generalization.
+            logger.warning(f"Using Anthropic Claude (legacy Text Completions) like structure for model: {model_id}. This may need adjustment.")
             body_params = {
-                "prompt": prompt, # This is an assumption
+                "prompt": prompt, 
                 "max_tokens_to_sample": max_tokens, # Assumption
                 "temperature": temperature,
                 "top_p": top_p,
@@ -144,10 +180,22 @@ class BedrockHandler:
         """Helper to extract the generated text from the model's response body."""
         generated_text: Optional[str] = None
 
-        if "anthropic.claude" in model_id or \
+        if "anthropic.claude-3" in model_id: # Handle Claude 3 Messages API response
+            content_blocks = response_body_json.get('content', [])
+            if content_blocks and isinstance(content_blocks, list) and len(content_blocks) > 0:
+                # Assuming the first block is the text response we want
+                first_block = content_blocks[0]
+                if isinstance(first_block, dict) and first_block.get("type") == "text":
+                    generated_text = first_block.get('text')
+                else:
+                    logger.warning(f"First content block for Claude 3 model {model_id} is not a text block or is malformed: {first_block}")
+            else:
+                logger.warning(f"No content blocks found in Claude 3 model {model_id} response or content is not a list: {response_body_json.get('content')}")
+
+        elif "anthropic.claude" in model_id or \
            ("deepseek" in model_id.lower() and "completion" in response_body_json) or \
            ("meta.llama" in model_id.lower() and "generation" in response_body_json): # Llama2 specific
-            if "completion" in response_body_json: # Claude, some DeepSeek
+            if "completion" in response_body_json: # Claude (legacy), some DeepSeek
                 generated_text = response_body_json.get('completion')
             elif "generation" in response_body_json: # Llama2
                 generated_text = response_body_json.get('generation')
