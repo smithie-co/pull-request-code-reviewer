@@ -135,30 +135,64 @@ def main():
 
         logger.info(f"Successfully fetched diff for PR #{pr_number}. Diff length: {len(pr_diff_content)} chars.")
 
-        # --- Perform Analysis --- 
-        logger.info("Performing AI analysis on the diff...")
-        # Ensure this is only called if pr_diff_content is not empty and we haven't exited.
-        summary = analysis_s.summarize_changes(diff_content=pr_diff_content)
-        logger.info(f"Summary generated: {summary[:100]}...")
-        
+        # --- Perform Heavy Analysis (needed for Release Notes first, then detailed review) ---
         heavy_analysis = None
-        refined_analysis_results = None # This will store the structured list for line comments
         try:
+            logger.info("Performing initial AI-driven heavy analysis (for release notes and detailed review comment)...")
             heavy_analysis = analysis_s.analyze_code_changes(diff_content=pr_diff_content)
-            logger.info(f"Heavy analysis completed (raw output preview): {str(heavy_analysis)[:100]}...")
             if heavy_analysis:
-                # Assuming analyze_heavy_model_output returns the structured list:
-                # e.g., List[Dict{'file_path': str, 'line': int, 'suggestion': str}]
+                logger.info(f"Initial heavy analysis completed. Output preview: {str(heavy_analysis)[:100]}...")
+            else:
+                logger.warning("Initial heavy analysis via analyze_code_changes produced no output.")
+        except Exception as e:
+            logger.error(f"Error during initial heavy_analysis stage: {e}. Release notes and detailed review might be affected.")
+
+        # --- Generate and Update Release Notes in PR Description ---
+        if heavy_analysis: # Only proceed if heavy_analysis was successful and produced output
+            try:
+                logger.info("Generating non-technical release notes from the heavy analysis...")
+                # generate_release_notes expects a string input (which was diff_content, now heavy_analysis output)
+                release_notes_summary_text = analysis_s.generate_release_notes(diff_content=heavy_analysis)
+                if release_notes_summary_text:
+                    logger.info(f"Release notes generated: {release_notes_summary_text[:100]}...")
+                    logger.info(f"Attempting to update PR #{pr_number} description with these release notes...")
+                    if github_h.update_pr_description(pr_number=pr_number, release_notes_summary=release_notes_summary_text):
+                        logger.info(f"PR #{pr_number} description updated successfully with release notes.")
+                    else:
+                        logger.warning(f"Failed to update PR #{pr_number} description with release notes (handler returned False or no update made).")
+                else:
+                    logger.warning("Release notes generation (from heavy_analysis) produced no output.")
+            except Exception as e:
+                logger.error(f"Error occurred during release notes generation or PR description update: {e}")
+        else:
+            logger.info("Skipping release notes generation and PR description update because initial heavy analysis failed or was empty.")
+
+        # --- Perform Analysis for the Review Comment Body ---
+        logger.info("Performing AI analysis for the main review comment body...")
+        summary_for_review_comment = ""
+        try:
+            summary_for_review_comment = analysis_s.summarize_changes(diff_content=pr_diff_content) # Uses original diff
+            logger.info(f"Summary for review comment generated: {summary_for_review_comment[:100]}...")
+        except Exception as e:
+            logger.error(f"Error generating summary for review comment: {e}. An empty summary will be used.")
+        
+        # Refined analysis for line comments (uses the heavy_analysis from above)
+        refined_analysis_results = None 
+        if heavy_analysis: # Reuse the heavy_analysis from before
+            try:
+                logger.info("Refining heavy analysis to extract actionable line-specific suggestions...")
                 refined_analysis_results = analysis_s.analyze_heavy_model_output(
-                    heavy_model_output=heavy_analysis,
-                    diff_content=pr_diff_content # Pass the original diff content
+                    heavy_model_output=heavy_analysis, # Output from analyze_code_changes
+                    diff_content=pr_diff_content # Original diff for context
                 )
                 if refined_analysis_results:
-                    logger.info(f"Refined analysis completed. Found {len(refined_analysis_results)} actionable suggestions.")
+                    logger.info(f"Refined analysis for line comments completed. Found {len(refined_analysis_results)} actionable suggestions.")
                 else:
-                    logger.info("Refined analysis did not produce actionable suggestions.")
-        except Exception as e:
-            logger.error(f"Error during detailed analysis phase: {e}. Proceeding with summary only for the main body.")
+                    logger.info("Refined analysis for line comments did not produce actionable suggestions.")
+            except Exception as e:
+                logger.error(f"Error during refined analysis (analyze_heavy_model_output): {e}. Line comments may be missing.")
+        else:
+            logger.info("Skipping refined analysis for line comments as initial heavy analysis was not available or failed.")
         
         # --- Prepare Line-Specific Comments ---
         line_specific_comments_for_review = []
@@ -190,9 +224,9 @@ def main():
         # The overflow of line comments is now handled by github_handler.post_pr_review.
         
         review_body_text = analysis_s.generate_review_body(
-            summary=summary,
-            refined_analysis=None, # Pass None as detailed suggestions are now line comments
-            heavy_analysis_raw=heavy_analysis if not refined_analysis_results else None # Pass raw if no refined items
+            summary=summary_for_review_comment,
+            refined_analysis=heavy_analysis, # Pass the raw heavy_analysis string for the detailed section
+            heavy_analysis_raw=heavy_analysis if not refined_analysis_results else None 
         )
 
         logger.info(f"Posting review to PR #{pr_number} on commit {current_head_sha}...")

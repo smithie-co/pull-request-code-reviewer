@@ -362,3 +362,63 @@ class GithubHandler:
         except Exception as e:
             logger.error(f"Unexpected error posting review to PR #{pr_number}: {e}", exc_info=True)
             raise RuntimeError(f"Unexpected error posting review: {str(e)}") from e
+
+    def update_pr_description(self, pr_number: int, release_notes_summary: str, repo_name_override: Optional[str] = None) -> bool:
+        """
+        Updates the description (body) of a pull request by prepending a release notes summary.
+
+        Args:
+            pr_number: The pull request number.
+            release_notes_summary: The release notes summary text to add.
+            repo_name_override: Optional repository name to override the one set during init.
+
+        Returns:
+            True if the PR description was updated successfully, False otherwise.
+        
+        Raises:
+            ValueError: If PR not found or release_notes_summary is empty.
+            RuntimeError: For GitHub API errors.
+        """
+        if not release_notes_summary:
+            logger.warning("Release notes summary is empty. PR description will not be updated.")
+            return False
+
+        pr = self._get_pull_request_obj(pr_number, repo_name_override)
+        
+        formatted_release_notes = f"## Release Notes Summary\n\n{release_notes_summary}\n\n---\n\n"
+        
+        current_body = pr.body if pr.body else ""
+        
+        # Check if our release notes section already exists to avoid duplication
+        # This is a simple check; more sophisticated checks might be needed if format varies.
+        release_notes_header = "## Release Notes Summary"
+        if release_notes_header in current_body:
+            # Find the start of our section
+            start_index = current_body.find(release_notes_header)
+            # Find the end of our section (assuming it's followed by --- or end of body)
+            end_marker = "\n\n---\n\n"
+            end_index_marker_search = current_body.find(end_marker, start_index)
+            
+            if end_index_marker_search != -1:
+                end_index = end_index_marker_search + len(end_marker)
+                # Replace existing section
+                new_body = current_body[:start_index] + formatted_release_notes + current_body[end_index:]
+                logger.info(f"Replacing existing release notes in PR #{pr_number}.")
+            else:
+                # Could not clearly define the end of the existing section, prepend to be safe
+                new_body = formatted_release_notes + current_body
+                logger.info(f"Prepending release notes to PR #{pr_number} as end of existing section was unclear.")
+        else:
+            new_body = formatted_release_notes + current_body
+            logger.info(f"Prepending release notes to PR #{pr_number}.")
+
+        try:
+            pr.edit(body=new_body)
+            logger.info(f"Successfully updated PR #{pr_number} description with release notes.")
+            return True
+        except GithubException as e:
+            logger.error(f"GitHub API error updating PR #{pr_number} description: {e.status} {e.data}")
+            raise RuntimeError(f"GitHub API error updating PR description: {e.data.get('message', str(e))}") from e
+        except Exception as e:
+            logger.error(f"Unexpected error updating PR #{pr_number} description: {e}")
+            raise RuntimeError(f"Unexpected error updating PR description: {str(e)}") from e
