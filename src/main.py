@@ -2,12 +2,14 @@ import json
 import logging
 import os
 import sys
+import time
 from typing import Dict
 
 from src import config # To ensure it's loaded, though individual configs are used directly
 from src.bedrock_handler import BedrockHandler
 from src.github_handler import GithubHandler
 from src.analysis_service import AnalysisService
+from src.rate_limiter import configure_global_rate_limiter
 
 # Setup basic logging
 # Consider moving this to a shared utility or ensuring it's robustly configured once.
@@ -37,12 +39,7 @@ def main():
         config.get_required_env_var("LIGHT_MODEL_ID")
         config.get_required_env_var("DEEPSEEK_MODEL_ID")
 
-        # Initialize handlers
-        bedrock_h = BedrockHandler() # Uses config values by default
-        # GithubHandler will try to infer repo_name from event_path if repo_name_env is None,
-        # but explicit is better if available from action context.
-        github_h = GithubHandler(github_token=gh_token, repo_name=repo_name_env)
-        analysis_s = AnalysisService(bedrock_handler=bedrock_h)
+                # Configure global rate limiter        # You can adjust these values via environment variables if needed        requests_per_minute = int(os.getenv("BEDROCK_REQUESTS_PER_MINUTE", "40"))  # Conservative default        burst_capacity = int(os.getenv("BEDROCK_BURST_CAPACITY", "8"))        configure_global_rate_limiter(requests_per_minute=requests_per_minute, burst_capacity=burst_capacity)        logger.info(f"Configured rate limiter: {requests_per_minute} req/min, burst: {burst_capacity}")                # Initialize handlers        bedrock_h = BedrockHandler() # Uses config values by default        # GithubHandler will try to infer repo_name from event_path if repo_name_env is None,        # but explicit is better if available from action context.        github_h = GithubHandler(github_token=gh_token, repo_name=repo_name_env)        analysis_s = AnalysisService(bedrock_handler=bedrock_h)
 
         logger.info("Handlers initialized successfully.")
 
@@ -201,30 +198,7 @@ def main():
         else:
             logger.info("Skipping refined analysis for line comments as initial heavy analysis was not available or failed.")
         
-        # --- Perform Individual File Analysis ---
-        individual_file_analyses: Dict[str, str] = {}
-        if changed_files: # Ensure changed_files is populated
-            logger.info(f"Starting individual analysis for {len(changed_files)} changed files...")
-            for file_info in changed_files:
-                filename = file_info.get("filename")
-                file_patch = file_info.get("patch") # This is the diff for the individual file
-                
-                if filename and file_patch:
-                    try:
-                        logger.info(f"Performing analysis for file: {filename}")
-                        file_analysis_result = analysis_s.analyze_individual_file_diff(file_patch=file_patch, filename=filename)
-                        if file_analysis_result:
-                            individual_file_analyses[filename] = file_analysis_result
-                            logger.info(f"Completed analysis for file: {filename}. Result length: {len(file_analysis_result)}")
-                        else:
-                            logger.info(f"Analysis for file: {filename} returned no content.")
-                    except Exception as e:
-                        logger.error(f"Error during analysis of file {filename}: {e}. This file's analysis will be skipped.")
-                        individual_file_analyses[filename] = f"Could not analyze {filename} due to an error: {str(e)}"
-                elif filename and not file_patch:
-                    logger.info(f"Skipping analysis for file {filename} as it has no patch content (e.g., binary, renamed, or mode change only). ")        
-        else:
-            logger.info("No changed files data available to perform individual file analysis.")
+                # --- Perform Individual File Analysis ---        individual_file_analyses: Dict[str, str] = {}        if changed_files: # Ensure changed_files is populated            logger.info(f"Starting individual analysis for {len(changed_files)} changed files...")            for index, file_info in enumerate(changed_files):                filename = file_info.get("filename")                file_patch = file_info.get("patch") # This is the diff for the individual file                                if filename and file_patch:                    try:                        logger.info(f"Performing analysis for file: {filename} ({index + 1}/{len(changed_files)})")                        file_analysis_result = analysis_s.analyze_individual_file_diff(file_patch=file_patch, filename=filename)                        if file_analysis_result:                            individual_file_analyses[filename] = file_analysis_result                            logger.info(f"Completed analysis for file: {filename}. Result length: {len(file_analysis_result)}")                        else:                            logger.info(f"Analysis for file: {filename} returned no content.")                                                # Add delay between file analyses to spread out API calls                        if index < len(changed_files) - 1:  # Don't delay after the last file                            import time                            delay_seconds = 1.5  # Configurable delay between file analyses                            logger.debug(f"Adding {delay_seconds}s delay before analyzing next file")                            time.sleep(delay_seconds)                                            except Exception as e:                        logger.error(f"Error during analysis of file {filename}: {e}. This file's analysis will be skipped.")                        individual_file_analyses[filename] = f"Could not analyze {filename} due to an error: {str(e)}"                elif filename and not file_patch:                    logger.info(f"Skipping analysis for file {filename} as it has no patch content (e.g., binary, renamed, or mode change only). ")                else:            logger.info("No changed files data available to perform individual file analysis.")
 
         # --- Prepare Line-Specific Comments ---
         line_specific_comments_for_review = []

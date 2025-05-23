@@ -9,37 +9,25 @@ from src import config
 
 @pytest.fixture
 def mock_bedrock_handler():
-    """Fixture to mock BedrockHandler."""
-    # mock_handler = mock.MagicMock(spec=BedrockHandler)
-    # If BedrockHandler is imported and spec is used, it can be more strict.
-    # For simplicity if BedrockHandler class itself is complex to mock perfectly for spec:
-    mock_handler = mock.MagicMock()
-    mock_handler.invoke_model = mock.MagicMock()
-    return mock_handler
+    """Returns a mock BedrockHandler."""
+    return mock.MagicMock()
 
 @pytest.fixture
 def mock_config_model_ids(monkeypatch):
-    """Mocks model IDs in the config."""
+    """Mocks the model IDs in config for tests."""
     monkeypatch.setattr(config, 'HEAVY_MODEL_ID', "test_heavy_model")
     monkeypatch.setattr(config, 'LIGHT_MODEL_ID', "test_light_model")
     monkeypatch.setattr(config, 'DEEPSEEK_MODEL_ID', "test_deepseek_model")
 
 @pytest.fixture
 def analysis_service(mock_bedrock_handler, mock_config_model_ids):
-    """Fixture to create an AnalysisService instance with a mocked BedrockHandler."""
-    return AnalysisService(bedrock_handler=mock_bedrock_handler)
+    """Returns an AnalysisService with mocked dependencies."""
+    return AnalysisService(mock_bedrock_handler)
 
 @pytest.fixture
 def sample_diff_content():
-    return """diff --git a/file1.py b/file1.py
-index 0000001..0000002 100644
---- a/file1.py
-+++ b/file1.py
-@@ -1,2 +1,3 @@
--old line
-+new line
-+another new line
-"""
+    """Returns sample diff content for testing."""
+    return "--- a/file.py\n+++ b/file.py\n@@ -1,3 +1,3 @@\n def hello():\n-    print('world')\n+    print('universe')\n"
 
 # --- analyze_code_changes Tests ---
 
@@ -55,7 +43,7 @@ def test_analyze_code_changes_success(analysis_service, mock_bedrock_handler):
     mock_bedrock_handler.invoke_model.assert_called_once_with(
         model_id="test_heavy_model",
         prompt=mock.ANY, # Prompt construction is complex, check basics if needed
-        max_tokens=3072,
+        analysis_type='heavy_analysis',  # Now uses dynamic token calculation
         temperature=0.5
     )
     # Check if prompt contains the diff
@@ -203,12 +191,11 @@ def test_summarize_changes_success(analysis_service, mock_bedrock_handler):
     result = analysis_service.summarize_changes(diff)
 
     assert result == expected_summary
-    mock_bedrock_handler.invoke_model.assert_called_once_with(
-        model_id="test_light_model",
-        prompt=mock.ANY,
-        max_tokens=512,
-        temperature=0.7
-    )
+    mock_bedrock_handler.invoke_model.assert_called_once_with(        
+        model_id="test_light_model",        
+        prompt=mock.ANY,        
+        analysis_type='summary',  # Now uses dynamic token calculation        
+        temperature=0.7    )
     assert diff in mock_bedrock_handler.invoke_model.call_args.kwargs['prompt']
 
 def test_summarize_changes_empty_diff(analysis_service):

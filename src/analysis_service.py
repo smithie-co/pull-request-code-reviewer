@@ -51,20 +51,17 @@ Only analyze the provided diff, do not make assumptions about code outside this 
 {diff_content}
 </diff>
 
-Assistant: Analysis results:"""
-        
-        logger.info(f"Analyzing code changes using model: {heavy_model_id}")
-        try:
-            analysis = self.bedrock_handler.invoke_model(
-                model_id=heavy_model_id,
-                prompt=prompt,
-                # Consider adjusting max_tokens, temperature for heavy analysis
-                max_tokens=3072, # Increased for potentially longer analysis
-                temperature=0.5  # Lower for more deterministic/factual analysis
-            )
-            return analysis
-        except Exception as e:
-            logger.error(f"Error during heavy model analysis (model: {heavy_model_id}): {e}")
+Assistant: Analysis results:"""                
+        logger.info(f"Analyzing code changes using model: {heavy_model_id}")        
+        try:           
+            analysis = self.bedrock_handler.invoke_model(                
+                model_id=heavy_model_id,                
+                prompt=prompt,                
+                analysis_type='heavy_analysis',  # Dynamic token calculation               
+                  temperature=0.5              )            
+            return analysis       
+        except Exception as e:            
+            logger.error(f"Error during heavy model analysis (model: {heavy_model_id}): {e}")           
             raise RuntimeError(f"Heavy model analysis failed: {e}") from e
 
     def analyze_heavy_model_output(self, heavy_model_output: str, 
@@ -268,10 +265,14 @@ Assistant: Summary of changes:"""
         
         body = f"## AI Code Review Summary 🤖\n\n{summary}\n"
 
-        if refined_analysis:
-            body += f"\n### Detailed Analysis (Refined)\n\n{refined_analysis}\n"
-        elif heavy_analysis_raw:
-            body += f"\n### Detailed Analysis (Raw)\n\n{heavy_analysis_raw}\n"
+        # Sanitize potentially error-containing analysis strings before including them
+        sanitized_refined_analysis = config.sanitize_model_arn_in_message(refined_analysis) if refined_analysis else None
+        sanitized_heavy_analysis_raw = config.sanitize_model_arn_in_message(heavy_analysis_raw) if heavy_analysis_raw else None
+
+        if sanitized_refined_analysis:
+            body += f"\n### Detailed Analysis (Refined)\n\n{sanitized_refined_analysis}\n"
+        elif sanitized_heavy_analysis_raw:
+            body += f"\n### Detailed Analysis (Raw)\n\n{sanitized_heavy_analysis_raw}\n"
         else:
             body += "\nNo detailed analysis was performed or it yielded no results.\n"
         
@@ -367,7 +368,7 @@ Assistant:Analysis for file `{filename}`:"""
             analysis = self.bedrock_handler.invoke_model(
                 model_id=heavy_model_id,
                 prompt=prompt,
-                max_tokens=2048, # Max tokens can be adjusted based on expected analysis length per file
+                max_tokens=4000, # Increased from 2048 for potentially larger analysis per file
                 temperature=0.5  
             )
             return analysis
@@ -376,4 +377,5 @@ Assistant:Analysis for file `{filename}`:"""
             # Don't let a single file analysis failure stop the whole PR review. Log and return empty.
             # Or, re-raise if individual file failures should be critical.
             # For now, returning empty string to allow process to continue for other files/overall review.
-            return f"Error analyzing file {filename}: {str(e)}" # Return error message in analysis
+            # Sanitize the error message before returning it
+            return config.sanitize_model_arn_in_message(f"Error analyzing file {filename}: {str(e)}") # Return sanitized error message

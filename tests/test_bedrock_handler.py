@@ -117,13 +117,15 @@ def test_invoke_model_success(mock_config_values, mock_boto_client, model_id_key
     called_args, called_kwargs = handler.client.invoke_model.call_args
     assert called_kwargs['modelId'] == actual_model_id
     
-    body_sent = json.loads(called_kwargs['body'])
-    if "anthropic.claude" in actual_model_id or ("meta.llama2" in actual_model_id and hasattr(config, model_id_key) and model_id_key == "DEEPSEEK_MODEL_ID") :
-        assert body_sent["prompt"] == prompt
-        assert body_sent["max_tokens_to_sample"] == 2048 # Default
-    elif "amazon.titan" in actual_model_id:
-        assert body_sent["inputText"] == prompt
-        assert body_sent["textGenerationConfig"]["maxTokenCount"] == 2048 # Default
+    body_sent = json.loads(called_kwargs['body'])    
+    if "anthropic.claude" in actual_model_id or ("meta.llama2" in actual_model_id and hasattr(config, model_id_key) and model_id_key == "DEEPSEEK_MODEL_ID") :        
+        assert body_sent["prompt"] == prompt        # Now uses dynamic token calculation, so check it's a reasonable value        
+        assert isinstance(body_sent["max_tokens_to_sample"], int)        
+        assert body_sent["max_tokens_to_sample"] > 0    
+    elif "amazon.titan" in actual_model_id:        
+        assert body_sent["inputText"] == prompt        # Now uses dynamic token calculation, so check it's a reasonable value        
+        assert isinstance(body_sent["textGenerationConfig"]["maxTokenCount"], int)        
+        assert body_sent["textGenerationConfig"]["maxTokenCount"] > 0
 
     if "amazon.titan" in actual_model_id:
         assert response == output_payload["results"][0][expected_output_key].strip()
