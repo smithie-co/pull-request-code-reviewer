@@ -39,7 +39,19 @@ def main():
         config.get_required_env_var("LIGHT_MODEL_ID")
         config.get_required_env_var("DEEPSEEK_MODEL_ID")
 
-                # Configure global rate limiter        # You can adjust these values via environment variables if needed        requests_per_minute = int(os.getenv("BEDROCK_REQUESTS_PER_MINUTE", "40"))  # Conservative default        burst_capacity = int(os.getenv("BEDROCK_BURST_CAPACITY", "8"))        configure_global_rate_limiter(requests_per_minute=requests_per_minute, burst_capacity=burst_capacity)        logger.info(f"Configured rate limiter: {requests_per_minute} req/min, burst: {burst_capacity}")                # Initialize handlers        bedrock_h = BedrockHandler() # Uses config values by default        # GithubHandler will try to infer repo_name from event_path if repo_name_env is None,        # but explicit is better if available from action context.        github_h = GithubHandler(github_token=gh_token, repo_name=repo_name_env)        analysis_s = AnalysisService(bedrock_handler=bedrock_h)
+        # Configure global rate limiter
+        # You can adjust these values via environment variables if needed
+        requests_per_minute = int(os.getenv("BEDROCK_REQUESTS_PER_MINUTE", "40"))  # Conservative default
+        burst_capacity = int(os.getenv("BEDROCK_BURST_CAPACITY", "8"))
+        configure_global_rate_limiter(requests_per_minute=requests_per_minute, burst_capacity=burst_capacity)
+        logger.info(f"Configured rate limiter: {requests_per_minute} req/min, burst: {burst_capacity}")
+        
+        # Initialize handlers
+        bedrock_handler = BedrockHandler() # Uses config values by default
+        # GithubHandler will try to infer repo_name from event_path if repo_name_env is None,
+        # but explicit is better if available from action context.
+        github_handler = GithubHandler(github_token=gh_token, repo_name=repo_name_env)
+        analysis_service = AnalysisService(bedrock_handler=bedrock_handler)
 
         logger.info("Handlers initialized successfully.")
 
@@ -80,35 +92,35 @@ def main():
         logger.info(f"Processing Pull Request #{pr_number}")
 
         # Ensure GithubHandler has the definitive repository name if it wasn't passed via GITHUB_REPOSITORY
-        if not github_h.repo_name:
+        if not github_handler.repo_name:
             current_repo_name = event_data.get('repository', {}).get('full_name')
             if not current_repo_name:
                 logger.error("Repository name could not be determined from GITHUB_REPOSITORY env var or event payload.")
                 sys.exit(1)
-            github_h.repo_name = current_repo_name # Set it if inferred from event after init
-            logger.info(f"Using repository: {github_h.repo_name} from event payload.")
+            github_handler.repo_name = current_repo_name # Set it if inferred from event after init
+            logger.info(f"Using repository: {github_handler.repo_name} from event payload.")
         else:
-            logger.info(f"Using repository: {github_h.repo_name}")
+            logger.info(f"Using repository: {github_handler.repo_name}")
 
         # --- Fetch current PR state and past bot reviews ---
         logger.info(f"Fetching PR data for PR #{pr_number}...")
-        pr_object = github_h._get_pull_request_obj(pr_number=pr_number)
+        pr_object = github_handler._get_pull_request_obj(pr_number=pr_number)
         current_head_sha = pr_object.head.sha
         logger.info(f"Current PR head SHA: {current_head_sha}")
 
-        all_reviews = github_h.get_pr_reviews(pr_number=pr_number)
-        last_bot_review = github_h.get_last_bot_review(all_reviews)
+        all_reviews = github_handler.get_pr_reviews(pr_number=pr_number)
+        last_bot_review = github_handler.get_last_bot_review(all_reviews)
 
         if last_bot_review:
             logger.info(f"Last bot review found: ID {last_bot_review.id}, Commit SHA: {last_bot_review.commit_id}")
             if last_bot_review.commit_id != current_head_sha and (last_bot_review.state != "DISMISSED" or last_bot_review.state != "COMMENTED"):
                 logger.info(f"New commits detected since last bot review (last: {last_bot_review.commit_id}, current: {current_head_sha}). Dismissing old review.")
                 dismiss_message = f"Dismissing old review as new commits have been pushed. Current head: {current_head_sha}."
-                if github_h.dismiss_review(last_bot_review, dismiss_message):
+                if github_handler.dismiss_review(last_bot_review, dismiss_message):
                     logger.info(f"Successfully dismissed previous review ID {last_bot_review.id}.")
                     # Attempt to delete the line comments from the dismissed review
                     logger.info(f"Attempting to delete line comments from dismissed review ID {last_bot_review.id}.")
-                    if github_h.delete_review_line_comments(pr_number=pr_number, review_id=last_bot_review.id):
+                    if github_handler.delete_review_line_comments(pr_number=pr_number, review_id=last_bot_review.id):
                         logger.info(f"Successfully initiated deletion of line comments for review ID {last_bot_review.id}.")
                     else:
                         logger.warning(f"Failed to initiate deletion of line comments for review ID {last_bot_review.id}. Some old comments might remain visible.")
@@ -128,13 +140,13 @@ def main():
         logger.info(f"Fetching changed files and diff for PR #{pr_number}...")
         # We need the combined diff for overall analysis and summarization.
         # Changed files list can be used if we want to iterate or provide per-file feedback later.
-        pr_diff_content = github_h.get_pr_diff(pr_number=pr_number)
-        changed_files = github_h.get_pr_changed_files(pr_number=pr_number)
+        pr_diff_content = github_handler.get_pr_diff(pr_number=pr_number)
+        changed_files = github_handler.get_pr_changed_files(pr_number=pr_number)
 
         if not pr_diff_content:
             logger.info(f"No diff content found for PR #{pr_number}. This might be an empty PR or only non-code changes. Exiting gracefully.")
             # Potentially post a comment saying no changes to analyze, or just exit.
-            # github_h.post_pr_review(pr_number, "AI Review: No code changes detected to analyze.")
+            # github_handler.post_pr_review(pr_number, "AI Review: No code changes detected to analyze.")
             sys.exit(0)
 
         logger.info(f"Successfully fetched diff for PR #{pr_number}. Diff length: {len(pr_diff_content)} chars.")
@@ -143,7 +155,7 @@ def main():
         heavy_analysis = None
         try:
             logger.info("Performing initial AI-driven heavy analysis (for release notes and detailed review comment)...")
-            heavy_analysis = analysis_s.analyze_code_changes(diff_content=pr_diff_content)
+            heavy_analysis = analysis_service.analyze_code_changes(diff_content=pr_diff_content)
             if heavy_analysis:
                 logger.info(f"Initial heavy analysis completed. Output preview: {str(heavy_analysis)[:100]}...")
             else:
@@ -156,11 +168,11 @@ def main():
             try:
                 logger.info("Generating non-technical release notes from the heavy analysis...")
                 # generate_release_notes expects a string input (which was diff_content, now heavy_analysis output)
-                release_notes_summary_text = analysis_s.generate_release_notes(diff_content=heavy_analysis)
+                release_notes_summary_text = analysis_service.generate_release_notes(diff_content=heavy_analysis)
                 if release_notes_summary_text:
                     logger.info(f"Release notes generated: {release_notes_summary_text[:100]}...")
                     logger.info(f"Attempting to update PR #{pr_number} description with these release notes...")
-                    if github_h.update_pr_description(pr_number=pr_number, release_notes_summary=release_notes_summary_text):
+                    if github_handler.update_pr_description(pr_number=pr_number, release_notes_summary=release_notes_summary_text):
                         logger.info(f"PR #{pr_number} description updated successfully with release notes.")
                     else:
                         logger.warning(f"Failed to update PR #{pr_number} description with release notes (handler returned False or no update made).")
@@ -175,7 +187,7 @@ def main():
         logger.info("Performing AI analysis for the main review comment body...")
         summary_for_review_comment = ""
         try:
-            summary_for_review_comment = analysis_s.summarize_changes(diff_content=pr_diff_content) # Uses original diff
+            summary_for_review_comment = analysis_service.summarize_changes(diff_content=pr_diff_content) # Uses original diff
             logger.info(f"Summary for review comment generated: {summary_for_review_comment[:100]}...")
         except Exception as e:
             logger.error(f"Error generating summary for review comment: {e}. An empty summary will be used.")
@@ -185,7 +197,7 @@ def main():
         if heavy_analysis: # Reuse the heavy_analysis from before
             try:
                 logger.info("Refining heavy analysis to extract actionable line-specific suggestions...")
-                refined_analysis_results = analysis_s.analyze_heavy_model_output(
+                refined_analysis_results = analysis_service.analyze_heavy_model_output(
                     heavy_model_output=heavy_analysis, # Output from analyze_code_changes
                     diff_content=pr_diff_content # Original diff for context
                 )
@@ -198,7 +210,35 @@ def main():
         else:
             logger.info("Skipping refined analysis for line comments as initial heavy analysis was not available or failed.")
         
-                # --- Perform Individual File Analysis ---        individual_file_analyses: Dict[str, str] = {}        if changed_files: # Ensure changed_files is populated            logger.info(f"Starting individual analysis for {len(changed_files)} changed files...")            for index, file_info in enumerate(changed_files):                filename = file_info.get("filename")                file_patch = file_info.get("patch") # This is the diff for the individual file                                if filename and file_patch:                    try:                        logger.info(f"Performing analysis for file: {filename} ({index + 1}/{len(changed_files)})")                        file_analysis_result = analysis_s.analyze_individual_file_diff(file_patch=file_patch, filename=filename)                        if file_analysis_result:                            individual_file_analyses[filename] = file_analysis_result                            logger.info(f"Completed analysis for file: {filename}. Result length: {len(file_analysis_result)}")                        else:                            logger.info(f"Analysis for file: {filename} returned no content.")                                                # Add delay between file analyses to spread out API calls                        if index < len(changed_files) - 1:  # Don't delay after the last file                            import time                            delay_seconds = 1.5  # Configurable delay between file analyses                            logger.debug(f"Adding {delay_seconds}s delay before analyzing next file")                            time.sleep(delay_seconds)                                            except Exception as e:                        logger.error(f"Error during analysis of file {filename}: {e}. This file's analysis will be skipped.")                        individual_file_analyses[filename] = f"Could not analyze {filename} due to an error: {str(e)}"                elif filename and not file_patch:                    logger.info(f"Skipping analysis for file {filename} as it has no patch content (e.g., binary, renamed, or mode change only). ")                else:            logger.info("No changed files data available to perform individual file analysis.")
+        # --- Perform Individual File Analysis ---        
+        individual_file_analyses: Dict[str, str] = {}        
+        if changed_files: # Ensure changed_files is populated            
+            logger.info(f"Starting individual analysis for {len(changed_files)} changed files...")            
+            for index, file_info in enumerate(changed_files):                
+                filename = file_info.get("filename")                
+                file_patch = file_info.get("patch") # This is the diff for the individual file                                
+                if filename and file_patch:                    
+                    try:                        
+                        logger.info(f"Performing analysis for file: {filename} ({index + 1}/{len(changed_files)})")                        
+                        file_analysis_result = analysis_service.analyze_individual_file_diff(file_patch=file_patch, filename=filename)                        
+                        if file_analysis_result:                            
+                            individual_file_analyses[filename] = file_analysis_result                            
+                            logger.info(f"Completed analysis for file: {filename}. Result length: {len(file_analysis_result)}")                        
+                        else:                            
+                            logger.info(f"Analysis for file: {filename} returned no content.")                                                
+                        # Add delay between file analyses to spread out API calls                        
+                        if index < len(changed_files) - 1:  # Don't delay after the last file                            
+                            import time                            
+                            delay_seconds = 1.5  # Configurable delay between file analyses                            
+                            logger.debug(f"Adding {delay_seconds}s delay before analyzing next file")                            
+                            time.sleep(delay_seconds)                                            
+                    except Exception as e:                        
+                        logger.error(f"Error during analysis of file {filename}: {e}. This file's analysis will be skipped.")                        
+                        individual_file_analyses[filename] = f"Could not analyze {filename} due to an error: {str(e)}"                
+                elif filename and not file_patch:                    
+                    logger.info(f"Skipping analysis for file {filename} as it has no patch content (e.g., binary, renamed, or mode change only). ")                
+        else:           
+            logger.info("No changed files data available to perform individual file analysis.")
 
         # --- Prepare Line-Specific Comments ---
         line_specific_comments_for_review = []
@@ -229,7 +269,7 @@ def main():
         # Let's assume generate_review_body primarily uses summary and can optionally include a textual version of analysis.
         # The overflow of line comments is now handled by github_handler.post_pr_review.
         
-        review_body_text = analysis_s.generate_review_body(
+        review_body_text = analysis_service.generate_review_body(
             summary=summary_for_review_comment,
             refined_analysis=heavy_analysis, # Pass the raw heavy_analysis string for the detailed section
             heavy_analysis_raw=heavy_analysis if not refined_analysis_results else None 
@@ -243,8 +283,8 @@ def main():
 
         logger.info(f"Posting review to PR #{pr_number} on commit {current_head_sha}...")
         
-        # The github_h.post_pr_review will now handle BOT_SIGNATURE and line comment formatting.
-        posted_review = github_h.post_pr_review(
+        # The github_handler.post_pr_review will now handle BOT_SIGNATURE and line comment formatting.
+        posted_review = github_handler.post_pr_review(
             pr_number=pr_number,
             review_body=review_body_text,
             commit_id=current_head_sha,
