@@ -107,6 +107,14 @@ Analysis:
 {heavy_model_output}
 </previous_analysis>
 
+CRITICAL JSON FORMATTING RULES:
+- Start response with [ and end with ]
+- Use double quotes for all strings
+- Escape special characters in strings (use \\" for quotes, \\\\ for backslashes)
+- No trailing commas
+- Each suggestion must have exactly: file_path, line, suggestion
+- If no suggestions found, return exactly: []
+
 Required JSON format (respond with this ONLY):
 [
   {{"file_path": "string", "line": integer, "suggestion": "string"}}
@@ -118,6 +126,7 @@ Rules:
 - Use actual file paths and line numbers from the diff
 - If no actionable suggestions found, return: []
 - NO explanations, NO conversation, NO markdown
+- ESCAPE all quotes and special characters in suggestion text
 
 Assistant:JSON Output:"""
 
@@ -165,8 +174,19 @@ Assistant:JSON Output:"""
                 # Try to parse the cleaned output
                 parsed_suggestions = json.loads(json_str_to_parse)
             except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse JSON: {e}. Content: {json_str_to_parse[:200]}...")
-                return []
+                logger.warning(f"Initial JSON parse failed: {e}. Attempting to repair JSON...")
+                # Try to repair common JSON issues
+                repaired_json = self._attempt_json_repair(json_str_to_parse)
+                if repaired_json:
+                    try:
+                        parsed_suggestions = json.loads(repaired_json)
+                        logger.info(f"Successfully repaired and parsed JSON after initial failure")
+                    except json.JSONDecodeError as e2:
+                        logger.error(f"Failed to parse even after repair attempt: {e2}. Content: {json_str_to_parse[:200]}...")
+                        return []
+                else:
+                    logger.error(f"Failed to parse JSON: {e}. Content: {json_str_to_parse[:200]}...")
+                    return []
 
             if not isinstance(parsed_suggestions, list):
                 logger.warning(f"Parsed JSON output is not a list as expected. Output: {parsed_suggestions}")
@@ -369,3 +389,80 @@ Assistant:Analysis for file `{filename}`:"""
             # For now, returning empty string to allow process to continue for other files/overall review.
             # Sanitize the error message before returning it
             return config.sanitize_model_arn_in_message(f"Error analyzing file {filename}: {str(e)}") # Return sanitized error message
+
+    def _attempt_json_repair(self, json_str: str) -> Optional[str]:
+        """
+        Attempts to repair common JSON issues in the given string.
+
+        Args:
+            json_str: The JSON string to attempt to repair.
+
+        Returns:
+            The repaired JSON string, or None if no repair was possible.
+        """
+        try:
+            # Remove any trailing incomplete elements (common when output is truncated)
+            repaired = json_str.strip()
+            
+            # If it ends with incomplete JSON structure, try to close it properly
+            if repaired.endswith(','):
+                # Remove trailing comma
+                repaired = repaired.rstrip(',').strip()
+            
+            # Check if we have an unterminated array - try to close it
+            if repaired.count('[') > repaired.count(']'):
+                logger.debug("Detected unclosed array, attempting to close it")
+                repaired += ']'
+            
+            # Check for unterminated strings by counting quotes
+            # This is a simple heuristic - count unescaped quotes
+            quote_count = 0
+            i = 0
+            while i < len(repaired):
+                if repaired[i] == '"' and (i == 0 or repaired[i-1] != '\\'):
+                    quote_count += 1
+                i += 1
+            
+            # If odd number of quotes, we likely have an unterminated string
+            if quote_count % 2 == 1:
+                logger.debug("Detected unterminated string, attempting to close it")
+                # Find the last quote and see if we can close the string
+                last_quote_pos = repaired.rfind('"')
+                if last_quote_pos != -1:
+                    # Check if this quote is escaped
+                    if last_quote_pos > 0 and repaired[last_quote_pos-1] == '\\':
+                        # It's escaped, so we actually need a closing quote
+                        repaired += '"'
+                    else:
+                        # Try to find if we're in the middle of a suggestion field
+                        # Look for "suggestion": " pattern before the last quote
+                        suggestion_pattern = '"suggestion":'
+                        suggestion_pos = repaired.rfind(suggestion_pattern)
+                        if suggestion_pos != -1 and suggestion_pos < last_quote_pos:
+                            # We're likely in a suggestion field, try to close it properly
+                            repaired += '"'
+                            # If this doesn't close the object, add closing brace and bracket
+                            if not repaired.rstrip().endswith('}'):
+                                repaired += '}'
+                            if repaired.count('[') > repaired.count(']'):
+                                repaired += ']'
+            
+            # Final check: if we still don't have matching brackets, try to balance them
+            open_brackets = repaired.count('{')
+            close_brackets = repaired.count('}')
+            if open_brackets > close_brackets:
+                repaired += '}' * (open_brackets - close_brackets)
+            
+            # Clean up any malformed trailing structure
+            # Remove any incomplete objects at the end
+            if repaired.endswith(','):
+                repaired = repaired.rstrip(',').strip()
+                if repaired.count('[') > repaired.count(']'):
+                    repaired += ']'
+            
+            logger.debug(f"Repair attempt result: {repaired[:100]}...")
+            return repaired
+            
+        except Exception as e:
+            logger.warning(f"JSON repair attempt failed: {e}")
+            return None

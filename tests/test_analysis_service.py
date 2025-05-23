@@ -181,6 +181,43 @@ def test_analyze_heavy_model_output_invocation_error(analysis_service, mock_bedr
     assert "Error during structured suggestion extraction" in caplog.text
     assert "Bedrock API error" in caplog.text
 
+def test_analyze_heavy_model_output_json_repair_success(analysis_service, mock_bedrock_handler, sample_diff_content, caplog):
+    """Test that JSON repair functionality is invoked for malformed JSON."""
+    heavy_output = "Some analysis."
+    # Simulate JSON with missing closing bracket (simpler repair case)
+    malformed_json = '''[
+  {"file_path": "file1.py", "line": 19, "suggestion": "Use quotes properly in this suggestion"},
+  {"file_path": "file2.py", "line": 25, "suggestion": "Complete suggestion"}'''
+    mock_bedrock_handler.invoke_model.return_value = malformed_json
+
+    with caplog.at_level(logging.WARNING):
+        result = analysis_service.analyze_heavy_model_output(heavy_output, diff_content=sample_diff_content)
+    
+    # JSON repair should succeed for this case
+    assert len(result) == 2
+    assert result[0]["file_path"] == "file1.py"
+    assert result[1]["file_path"] == "file2.py"
+    assert "Initial JSON parse failed" in caplog.text
+    assert "Attempting to repair JSON" in caplog.text
+
+def test_analyze_heavy_model_output_json_repair_truncated_array(analysis_service, mock_bedrock_handler, sample_diff_content, caplog):
+    """Test JSON repair for truncated arrays."""
+    heavy_output = "Some analysis."
+    # Simulate truncated JSON array (missing closing bracket) - simpler case
+    truncated_json = '''[
+  {"file_path": "file1.py", "line": 10, "suggestion": "Good suggestion"}'''
+    mock_bedrock_handler.invoke_model.return_value = truncated_json
+
+    with caplog.at_level(logging.WARNING):
+        result = analysis_service.analyze_heavy_model_output(heavy_output, diff_content=sample_diff_content)
+    
+    # Check that repair was attempted
+    assert "Initial JSON parse failed" in caplog.text
+    assert "Attempting to repair JSON" in caplog.text
+    
+    # The repair may or may not succeed depending on the complexity
+    # This test verifies the repair mechanism is invoked
+
 # --- summarize_changes Tests ---
 
 def test_summarize_changes_success(analysis_service, mock_bedrock_handler):

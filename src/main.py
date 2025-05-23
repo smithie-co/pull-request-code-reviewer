@@ -261,7 +261,7 @@ def main():
         individual_file_analyses: Dict[str, str] = {}
         
         # Circuit breaker for individual file analysis when hitting rate limits
-        enable_individual_analysis = os.getenv("ENABLE_INDIVIDUAL_FILE_ANALYSIS", "false").lower() == "true"  # Changed default to false
+        enable_individual_analysis = os.getenv("ENABLE_INDIVIDUAL_FILE_ANALYSIS", "true").lower() == "true"  # Changed default to false
         max_throttling_failures = int(os.getenv("MAX_INDIVIDUAL_FILE_THROTTLING_FAILURES", "1"))  # Reduced from 2
         throttling_failure_count = 0
         
