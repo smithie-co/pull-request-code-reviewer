@@ -16,19 +16,19 @@ class TokenCalculator:
     # Base token allocations for different types of analysis
     BASE_TOKENS = {
         'summary': 300,
-        'heavy_analysis': 1500,
-        'individual_file': 1000,
-        'structured_extraction': 800,
+        'heavy_analysis': 1200,
+        'individual_file': 800,
+        'structured_extraction': 600,
         'release_notes': 200
     }
     
     # Maximum tokens to allow for different analysis types
     MAX_TOKENS = {
-        'summary': 800,
-        'heavy_analysis': 6000,
-        'individual_file': 5000,
-        'structured_extraction': 3000,
-        'release_notes': 500
+        'summary': 600,
+        'heavy_analysis': 3000,
+        'individual_file': 2500,
+        'structured_extraction': 1500,
+        'release_notes': 400
     }
     
     # Minimum tokens to ensure meaningful output

@@ -369,8 +369,17 @@ class BedrockHandler:
                 # 'ModelNotReadyException' is also mentioned by AWS SDK to be auto-retried, but good to list if we handle it manually.
 
                 if error_code in retryable_errors and attempt < max_retries:
-                    wait_time = (initial_backoff_seconds * (2 ** attempt)) + (random.uniform(0, 1) * initial_backoff_seconds) # Exponential backoff with jitter
-                    logger.warning(f"Bedrock API {error_code} for model {model_id} (Attempt {attempt + 1}/{max_retries + 1}). Retrying in {wait_time:.2f} seconds... Error: {error_message}")
+                    # Special handling for token-based throttling
+                    if error_code == 'ThrottlingException' and 'tokens' in error_message.lower():
+                        # Token-based throttling needs longer delays
+                        wait_time = (initial_backoff_seconds * (3 ** attempt)) + (random.uniform(0, 2) * initial_backoff_seconds)
+                        wait_time = min(wait_time, 60)  # Cap at 60 seconds
+                        logger.warning(f"Bedrock API token-based {error_code} for model {model_id} (Attempt {attempt + 1}/{max_retries + 1}). Using extended backoff: {wait_time:.2f} seconds... Error: {error_message}")
+                    else:
+                        # Standard exponential backoff for other retryable errors
+                        wait_time = (initial_backoff_seconds * (2 ** attempt)) + (random.uniform(0, 1) * initial_backoff_seconds)
+                        logger.warning(f"Bedrock API {error_code} for model {model_id} (Attempt {attempt + 1}/{max_retries + 1}). Retrying in {wait_time:.2f} seconds... Error: {error_message}")
+                    
                     time.sleep(wait_time)
                     attempt += 1
                     continue # Retry the while loop

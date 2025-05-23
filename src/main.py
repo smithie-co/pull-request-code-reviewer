@@ -41,10 +41,12 @@ def main():
 
         # Configure global rate limiter
         # You can adjust these values via environment variables if needed
-        requests_per_minute = int(os.getenv("BEDROCK_REQUESTS_PER_MINUTE", "40"))  # Conservative default
-        burst_capacity = int(os.getenv("BEDROCK_BURST_CAPACITY", "8"))
+        # More conservative defaults to avoid token-based throttling
+        requests_per_minute = int(os.getenv("BEDROCK_REQUESTS_PER_MINUTE", "20"))  # Reduced from 40
+        burst_capacity = int(os.getenv("BEDROCK_BURST_CAPACITY", "5"))  # Reduced from 8
         configure_global_rate_limiter(requests_per_minute=requests_per_minute, burst_capacity=burst_capacity)
         logger.info(f"Configured rate limiter: {requests_per_minute} req/min, burst: {burst_capacity}")
+        logger.info("Note: If hitting token-based rate limits, consider reducing BEDROCK_REQUESTS_PER_MINUTE further.")
         
         # Initialize handlers
         bedrock_handler = BedrockHandler() # Uses config values by default
@@ -162,6 +164,19 @@ def main():
                 logger.warning("Initial heavy analysis via analyze_code_changes produced no output.")
         except Exception as e:
             logger.error(f"Error during initial heavy_analysis stage: {e}. Release notes and detailed review might be affected.")
+            # If heavy analysis fails due to throttling, try a lighter approach
+            if "ThrottlingException" in str(e) and "tokens" in str(e).lower():
+                logger.info("Attempting fallback to summary-based analysis due to token throttling...")
+                try:
+                    # Use summarize_changes as a fallback - it uses fewer tokens
+                    heavy_analysis = analysis_service.summarize_changes(diff_content=pr_diff_content)
+                    if heavy_analysis:
+                        logger.info("Fallback summary analysis completed successfully.")
+                    else:
+                        logger.warning("Fallback summary analysis also produced no output.")
+                except Exception as fallback_e:
+                    logger.error(f"Fallback summary analysis also failed: {fallback_e}")
+                    heavy_analysis = None
 
         # --- Generate and Update Release Notes in PR Description ---
         if heavy_analysis: # Only proceed if heavy_analysis was successful and produced output
