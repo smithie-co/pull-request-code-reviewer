@@ -80,7 +80,14 @@ class BedrockHandler:
         """Helper to create the request body based on model provider."""
         body_params: Dict[str, Any]
 
-        if "anthropic.claude-3" in model_id: # Handle Claude 3 models with Messages API
+        # Check for Claude 3+ models (including Claude 4) that require Messages API
+        if ("anthropic.claude-3" in model_id or 
+            "claude-3" in model_id or 
+            "claude-4" in model_id or 
+            "claude-sonnet-4" in model_id or
+            "claude-haiku-3" in model_id or
+            "claude-opus-3" in model_id or
+            "claude-opus-4" in model_id): # Handle Claude 3+ models with Messages API
             # Extract user content from the "Human: ... Assistant: ..." prompt format
             user_content = prompt
             if prompt.startswith("Human: "):
@@ -93,12 +100,12 @@ class BedrockHandler:
                     user_content = prompt[user_content_start:].strip()
             else:
                 # If prompt doesn't follow Human:/Assistant: format, use as is, but log a warning.
-                logger.warning(f"Prompt for Claude 3 model '{model_id}' does not start with 'Human: '. Using the entire prompt as user content.")
+                logger.warning(f"Prompt for Claude 3+ model '{model_id}' does not start with 'Human: '. Using the entire prompt as user content.")
                 user_content = prompt.strip()
             
             body_params = {
-                "anthropic_version": "bedrock-2023-05-31", # Required for Claude 3
-                "max_tokens": max_tokens, # Claude 3 uses "max_tokens"
+                "anthropic_version": "bedrock-2023-05-31", # Required for Claude 3+
+                "max_tokens": max_tokens, # Claude 3+ uses "max_tokens"
                 "messages": [
                     {
                         "role": "user",
@@ -106,7 +113,7 @@ class BedrockHandler:
                     }
                 ]
             }
-            # Optional parameters for Claude 3 Messages API
+            # Optional parameters for Claude 3+ Messages API
             if temperature is not None: body_params["temperature"] = temperature
             if top_p is not None: body_params["top_p"] = top_p
             if top_k is not None: body_params["top_k"] = top_k
@@ -202,7 +209,13 @@ class BedrockHandler:
         """Helper to extract the generated text from the model's response body."""
         generated_text: Optional[str] = None
 
-        if "anthropic.claude-3" in model_id: # Handle Claude 3 Messages API response
+        # Check for Claude 3+ models (including Claude 4) that use Messages API response
+        if ("anthropic.claude-3" in model_id or 
+            "claude-3" in model_id or 
+            "claude-4" in model_id or 
+            "claude-sonnet-4" in model_id or
+            "claude-haiku-3" in model_id or
+            "claude-opus-3" in model_id): # Handle Claude 3+ Messages API response
             content_blocks = response_body_json.get('content', [])
             if content_blocks and isinstance(content_blocks, list) and len(content_blocks) > 0:
                 # Assuming the first block is the text response we want
@@ -210,9 +223,9 @@ class BedrockHandler:
                 if isinstance(first_block, dict) and first_block.get("type") == "text":
                     generated_text = first_block.get('text')
                 else:
-                    logger.warning(f"First content block for Claude 3 model {model_id} is not a text block or is malformed: {first_block}")
+                    logger.warning(f"First content block for Claude 3+ model {model_id} is not a text block or is malformed: {first_block}")
             else:
-                logger.warning(f"No content blocks found in Claude 3 model {model_id} response or content is not a list: {response_body_json.get('content')}")
+                logger.warning(f"No content blocks found in Claude 3+ model {model_id} response or content is not a list: {response_body_json.get('content')}")
 
         elif "anthropic.claude" in model_id or \
            ("deepseek" in model_id.lower() and "completion" in response_body_json) or \
