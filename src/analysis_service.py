@@ -95,36 +95,29 @@ Assistant: Analysis results:"""
             logger.error("DEEPSEEK_MODEL_ID is not configured for refining analysis.")
             raise ValueError("DEEPSEEK_MODEL_ID is not configured for refining analysis.")
 
-        prompt = f"""Human: You are an AI assistant that extracts actionable code review suggestions from an analysis. 
-Based on the original code diff and the provided analysis, identify specific, actionable suggestions. 
-For each suggestion, determine the file path and the relevant line number within that file as shown in the diff or the new version of the file.
+        prompt = f"""Human: Extract actionable code review suggestions from the analysis below. You MUST respond with ONLY a valid JSON array - no explanations, no conversation, no markdown blocks.
 
 Original Code Diff:
 <diff>
 {diff_content}
 </diff>
 
-Analysis from another AI:
+Analysis:
 <previous_analysis>
 {heavy_model_output}
 </previous_analysis>
 
-Please format your output as a JSON array, where each object in the array has the following keys: "file_path" (string), "line" (integer, the specific line number your suggestion pertains to in the changed file), and "suggestion" (string, your concise suggestion for that line).
-If no specific, actionable, line-level suggestions can be extracted, return an empty JSON array [].
-
-Example of desired JSON output format:
+Required JSON format (respond with this ONLY):
 [
-  {{
-    "file_path": "src/example.py",
-    "line": 42,
-    "suggestion": "Consider using a more descriptive variable name instead of 'x'."
-  }},
-  {{
-    "file_path": "tests/test_utils.py",
-    "line": 15,
-    "suggestion": "Add a test case for empty input."
-  }}
+  {{"file_path": "string", "line": integer, "suggestion": "string"}}
 ]
+
+Rules:
+- ONLY output valid JSON array
+- Each suggestion must have: file_path (string), line (integer), suggestion (string)
+- Use actual file paths and line numbers from the diff
+- If no actionable suggestions found, return: []
+- NO explanations, NO conversation, NO markdown
 
 Assistant:JSON Output:"""
 
@@ -134,7 +127,7 @@ Assistant:JSON Output:"""
                 model_id=deepseek_model_id,
                 prompt=prompt,
                 analysis_type='structured_extraction',  # Dynamic token calculation
-                temperature=0.3
+                temperature=0.1  # Lower temperature for more deterministic JSON output
             )
             
             logger.debug(f"Raw structured output from model {deepseek_model_id}: {raw_structured_output}")
@@ -142,6 +135,7 @@ Assistant:JSON Output:"""
             # Attempt to extract JSON, handling potential markdown code blocks
             json_str_to_parse = raw_structured_output.strip()
 
+            # Remove markdown code blocks if present
             if json_str_to_parse.startswith("```json"):
                 json_str_to_parse = json_str_to_parse[len("```json"):].strip()
                 if json_str_to_parse.endswith("```"):
@@ -151,32 +145,28 @@ Assistant:JSON Output:"""
                 if json_str_to_parse.endswith("```"):
                     json_str_to_parse = json_str_to_parse[:-len("```")].strip()
 
-            # Ensure it looks like an array or object before trying to parse directly
-            # (though LLMs might just return the array without a full block sometimes)
-            # The main attempt is to clean the string and then try parsing.
+            # If the response doesn't start with '[', try to find JSON array within the text
+            if not json_str_to_parse.startswith('['):
+                logger.warning(f"Response doesn't start with '[', attempting to extract JSON from: {json_str_to_parse[:100]}...")
+                json_start_index = json_str_to_parse.find('[')
+                if json_start_index != -1:
+                    json_end_index = json_str_to_parse.rfind(']')
+                    if json_end_index != -1 and json_start_index < json_end_index:
+                        json_str_to_parse = json_str_to_parse[json_start_index:json_end_index+1]
+                        logger.debug(f"Extracted JSON substring: {json_str_to_parse[:200]}...")
+                    else:
+                        logger.error(f"Could not find valid JSON array in model output: {json_str_to_parse[:200]}...")
+                        return []
+                else:
+                    logger.error(f"No JSON array found in model output: {json_str_to_parse[:200]}...")
+                    return []
 
             try:
                 # Try to parse the cleaned output
                 parsed_suggestions = json.loads(json_str_to_parse)
-            except json.JSONDecodeError:
-                # If parsing the cleaned output fails, try to find a JSON array within the text
-                logger.warning(f"Initial JSON parse of cleaned output failed. Trying to find array in: {json_str_to_parse[:200]}...") # Log snippet
-                json_start_index = json_str_to_parse.find('[')
-                json_end_index = json_str_to_parse.rfind(']')
-                
-                if json_start_index != -1 and json_end_index != -1 and json_start_index < json_end_index:
-                    extracted_json_str = json_str_to_parse[json_start_index : json_end_index+1]
-                    logger.debug(f"Attempting to parse extracted substring: {extracted_json_str[:200]}...")
-                    try:
-                        parsed_suggestions = json.loads(extracted_json_str)
-                    except json.JSONDecodeError as e_inner:
-                        logger.error(f"Failed to decode extracted JSON array. Error: {e_inner}. Extracted substring: {extracted_json_str[:500]}...")
-                        logger.error(f"Original raw output (first 500 chars) was: {raw_structured_output[:500]}...")
-                        return [] 
-                else:
-                    logger.error(f"Could not find valid JSON array delimiters '[' and ']' in the model output after initial parse failed. Cleaned output was: {json_str_to_parse[:500]}...")
-                    logger.error(f"Original raw output (first 500 chars) was: {raw_structured_output[:500]}...")
-                    return []
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse JSON: {e}. Content: {json_str_to_parse[:200]}...")
+                return []
 
             if not isinstance(parsed_suggestions, list):
                 logger.warning(f"Parsed JSON output is not a list as expected. Output: {parsed_suggestions}")

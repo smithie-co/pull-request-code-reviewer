@@ -100,16 +100,16 @@ def test_analyze_heavy_model_output_malformed_json(analysis_service, mock_bedroc
     """Test handling of malformed JSON from the model - specifically when extraction fails after initial full parse fails."""
     heavy_output = "Some analysis."
     # This input will cause the initial json.loads to fail, then find will attempt to find '[' and ']'
-    # Since ']' is not found after '[', it will hit the "Could not find or parse JSON array" warning path.
+    # Since ']' is not found after '[', it will hit the "Could not find valid JSON array" error path.
     mock_bedrock_handler.invoke_model.return_value = "Not a valid JSON string {["
 
-    # The current input will trigger the warning about not finding a JSON array after initial parse fails
+    # The current input will trigger the error about not finding a JSON array
     with caplog.at_level(logging.WARNING): # Expect a WARNING
         result = analysis_service.analyze_heavy_model_output(heavy_output, diff_content=sample_diff_content)
     
     assert result == []
-    # Check for the specific WARNING message
-    assert "Could not find valid JSON array delimiters '[' and ']'" in caplog.text
+    # Check for the specific ERROR message (updated for new logic)
+    assert "Could not find valid JSON array in model output" in caplog.text
 
 def test_analyze_heavy_model_output_not_a_list(analysis_service, mock_bedrock_handler, sample_diff_content, caplog):
     """Test handling if parsed JSON is not a list."""
@@ -120,7 +120,8 @@ def test_analyze_heavy_model_output_not_a_list(analysis_service, mock_bedrock_ha
         result = analysis_service.analyze_heavy_model_output(heavy_output, diff_content=sample_diff_content)
     
     assert result == []
-    assert "Parsed JSON output is not a list as expected" in caplog.text
+    # Updated: Now the logic first checks for '[' so it will give a different error for objects
+    assert "No JSON array found in model output" in caplog.text
 
 def test_analyze_heavy_model_output_items_missing_keys(analysis_service, mock_bedrock_handler, sample_diff_content, caplog):
     """Test filtering of items with missing keys."""
@@ -286,5 +287,5 @@ def test_model_id_override(analysis_service, mock_bedrock_handler, sample_diff_c
         model_id=custom_deepseek_model, 
         prompt=mock.ANY, 
         analysis_type='structured_extraction',
-        temperature=0.3
+        temperature=0.1
     ) 
