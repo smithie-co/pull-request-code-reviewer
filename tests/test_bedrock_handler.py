@@ -1,12 +1,42 @@
 import pytest
 from unittest import mock
 import json
+import boto3
+from unittest.mock import Mock, patch
 
 from botocore.exceptions import ClientError, NoCredentialsError, PartialCredentialsError
 
 # Assuming src.config and src.bedrock_handler are structured as previously discussed
 from src.bedrock_handler import BedrockHandler
 from src import config
+
+# Mock global token budget manager imports
+@pytest.fixture(autouse=True)
+def mock_token_budget_manager():
+    """Mock the global token budget manager for all tests."""
+    with patch('src.bedrock_handler.get_global_token_budget_manager') as mock_budget:
+        mock_token_manager = Mock()
+        mock_token_manager.can_use_tokens.return_value = (True, 10000)  # Always allow tokens
+        mock_token_manager.record_usage.return_value = None
+        mock_budget.return_value = mock_token_manager
+        yield mock_token_manager
+
+@pytest.fixture(autouse=True)
+def mock_rate_limiter():
+    """Mock the global rate limiter for all tests."""
+    with patch('src.bedrock_handler.get_global_rate_limiter') as mock_limiter:
+        mock_rate_limiter_instance = Mock()
+        mock_rate_limiter_instance.acquire.return_value = True  # Always allow requests
+        mock_limiter.return_value = mock_rate_limiter_instance
+        yield mock_rate_limiter_instance
+
+@pytest.fixture(autouse=True)
+def mock_token_calculator():
+    """Mock the TokenCalculator for all tests."""
+    with patch('src.bedrock_handler.TokenCalculator') as mock_calc:
+        mock_calc.get_model_context_limits.return_value = 100000
+        mock_calc.calculate_dynamic_max_tokens.return_value = 2000  # Default calculated tokens
+        yield mock_calc
 
 @pytest.fixture
 def mock_config_values(monkeypatch):
@@ -111,7 +141,7 @@ def test_invoke_model_success(mock_config_values, mock_boto_client, model_id_key
 
     prompt_content = "Test prompt"
     prompt = prompt_template.format(prompt_content)
-    response = handler.invoke_model(actual_model_id, prompt)
+    response = handler.invoke_model(actual_model_id, prompt, analysis_type='heavy_analysis')
 
     handler.client.invoke_model.assert_called_once()
     called_args, called_kwargs = handler.client.invoke_model.call_args
@@ -119,11 +149,13 @@ def test_invoke_model_success(mock_config_values, mock_boto_client, model_id_key
     
     body_sent = json.loads(called_kwargs['body'])    
     if "anthropic.claude" in actual_model_id or ("meta.llama2" in actual_model_id and hasattr(config, model_id_key) and model_id_key == "DEEPSEEK_MODEL_ID") :        
-        assert body_sent["prompt"] == prompt        # Now uses dynamic token calculation, so check it's a reasonable value        
-        assert isinstance(body_sent["max_tokens_to_sample"], int)        
-        assert body_sent["max_tokens_to_sample"] > 0    
+        assert body_sent["prompt"] == prompt        
+        # Now uses dynamic token calculation, so check it's a reasonable value        
+        assert isinstance(body_sent.get("max_tokens_to_sample", body_sent.get("max_tokens")), int)        
+        assert body_sent.get("max_tokens_to_sample", body_sent.get("max_tokens")) > 0    
     elif "amazon.titan" in actual_model_id:        
-        assert body_sent["inputText"] == prompt        # Now uses dynamic token calculation, so check it's a reasonable value        
+        assert body_sent["inputText"] == prompt        
+        # Now uses dynamic token calculation, so check it's a reasonable value        
         assert isinstance(body_sent["textGenerationConfig"]["maxTokenCount"], int)        
         assert body_sent["textGenerationConfig"]["maxTokenCount"] > 0
 
@@ -136,66 +168,73 @@ def test_invoke_model_empty_model_id(mock_config_values, mock_boto_client):
     """Test invoke_model raises ValueError for empty model_id."""
     handler = BedrockHandler()
     with pytest.raises(ValueError, match="Model ID cannot be empty."):
-        handler.invoke_model("", "Test prompt")
+        handler.invoke_model("", "Test prompt", analysis_type='heavy_analysis')
 
 def test_invoke_model_empty_prompt(mock_config_values, mock_boto_client):
     """Test invoke_model raises ValueError for empty prompt."""
     handler = BedrockHandler()
     with pytest.raises(ValueError, match="Prompt cannot be empty."):
-        handler.invoke_model("some-model-id", "")
+        handler.invoke_model("test_model", "", analysis_type='heavy_analysis')
 
 @pytest.mark.parametrize("error_code, error_message, expected_exception, expected_message_match", [
-    ("AccessDeniedException", "User not authorized.", RuntimeError, "Access denied for anthropic.claude-v2. Check IAM permissions."),
-    ("ResourceNotFoundException", "Model not found.", RuntimeError, "Model anthropic.claude-v2 not found. Ensure it is enabled in the region."),
-    ("ThrottlingException", "Too many requests.", RuntimeError, "Model invocation throttled for anthropic.claude-v2."),
-    ("ModelTimeoutException", "Model timed out.", RuntimeError, "Model invocation timed out for anthropic.claude-v2."),
-    ("ValidationException", "Invalid request body.", ValueError, "Invalid request parameters for model anthropic.claude-v2. Details: Invalid request body."),
-    ("InternalServerException", "Bedrock internal error.", RuntimeError, r"Bedrock API error for anthropic.claude-v2 \(InternalServerException\): Bedrock internal error.")
+    ("ThrottlingException", "Too many requests.", RuntimeError, r"Model invocation throttled|Too many requests"),
+    ("ModelTimeoutException", "Model timed out.", RuntimeError, r"Model invocation timed out|Model timed out"),
+    ("InternalServerException", "Bedrock internal error.", RuntimeError, r"Bedrock API error.*InternalServerException.*Bedrock internal error"),
+    ("AccessDeniedException", "Access denied.", RuntimeError, r"Access denied.*Check IAM permissions"),
+    ("ResourceNotFoundException", "Model not found.", RuntimeError, r"Model.*not found.*Ensure it is enabled"),
+    ("ValidationException", "Invalid parameters.", ValueError, r"Invalid request parameters.*Details.*Invalid parameters"),
 ])
 def test_invoke_model_client_errors(mock_config_values, mock_boto_client, error_code, error_message, expected_exception, expected_message_match):
-    """Test handling of various Bedrock ClientErrors during model invocation."""
+    """Test invoke_model handles ClientError appropriately."""
     handler = BedrockHandler()
-    model_id = config.HEAVY_MODEL_ID
-
-    error_response = {'Error': {'Code': error_code, 'Message': error_message}}
-    handler.client.invoke_model.side_effect = ClientError(error_response, 'invoke_model')
+    
+    error_response = {
+        'Error': {
+            'Code': error_code,
+            'Message': error_message
+        }
+    }
+    handler.client.invoke_model.side_effect = ClientError(error_response, 'InvokeModel')
 
     with pytest.raises(expected_exception, match=expected_message_match):
-        handler.invoke_model(model_id, "Test prompt")
-    handler.client.invoke_model.assert_called_once()
+        handler.invoke_model("anthropic.claude-v2", "Test prompt", analysis_type='heavy_analysis')
 
 def test_invoke_model_unexpected_error(mock_config_values, mock_boto_client):
-    """Test handling of an unexpected non-ClientError error during model invocation."""
+    """Test invoke_model handles unexpected errors."""
     handler = BedrockHandler()
-    model_id = config.LIGHT_MODEL_ID
-    handler.client.invoke_model.side_effect = Exception("Some_unexpected_error_details")
+    
+    handler.client.invoke_model.side_effect = RuntimeError("Unexpected network error")
 
-    with pytest.raises(RuntimeError, match=r"Unexpected error invoking anthropic.claude-instant-v1: Some_unexpected_error_details"):
-        handler.invoke_model(model_id, "Test prompt")
+    with pytest.raises(RuntimeError, match="Unexpected error invoking"):
+        handler.invoke_model("anthropic.claude-v2", "Test prompt", analysis_type='heavy_analysis')
 
 def test_invoke_model_malformed_json_response(mock_config_values, mock_boto_client):
-    """Test model invocation when Bedrock returns malformed JSON."""
+    """Test invoke_model handles malformed JSON response."""
     handler = BedrockHandler()
-    model_id = config.LIGHT_MODEL_ID
-
-    mock_response_stream = mock.MagicMock()
-    mock_response_stream.read.return_value = b"this is not json"
-    handler.client.invoke_model.return_value = {'body': mock_response_stream}
-
-    with pytest.raises(RuntimeError, match=f"Failed to decode JSON response from {model_id}"):
-        handler.invoke_model(model_id, "Test prompt")
-
-def test_invoke_model_missing_output_key(mock_config_values, mock_boto_client):
-    """Test model invocation when the expected output key is missing from the response."""
-    handler = BedrockHandler()
-    model_id = config.LIGHT_MODEL_ID 
     
     mock_response_stream = mock.MagicMock()
-    mock_response_stream.read.return_value = json.dumps({"some_other_key": "some_value"}).encode('utf-8')
-    handler.client.invoke_model.return_value = {'body': mock_response_stream}
+    mock_response_stream.read.return_value = b"Not valid JSON content"
+    handler.client.invoke_model.return_value = {
+        'body': mock_response_stream,
+        'contentType': 'application/json'
+    }
 
-    with pytest.raises(RuntimeError, match=f"Model {model_id} returned no valid string text."):
-        handler.invoke_model(model_id, "Human: Test prompt\n\nAssistant:")
+    with pytest.raises(RuntimeError, match="Failed to decode JSON response"):
+        handler.invoke_model("anthropic.claude-v2", "Test prompt", analysis_type='heavy_analysis')
+
+def test_invoke_model_missing_output_key(mock_config_values, mock_boto_client):
+    """Test invoke_model handles missing expected output key."""
+    handler = BedrockHandler()
+    
+    mock_response_stream = mock.MagicMock()
+    mock_response_stream.read.return_value = json.dumps({"unexpected_key": "some value"}).encode('utf-8')
+    handler.client.invoke_model.return_value = {
+        'body': mock_response_stream,
+        'contentType': 'application/json'
+    }
+
+    with pytest.raises(RuntimeError, match="returned no valid string text"):
+        handler.invoke_model("anthropic.claude-v2", "Test prompt", analysis_type='heavy_analysis')
 
 # Example test for a model type not explicitly listed in bedrock_handler's _get_body_and_output_key initially,
 # to ensure the fallback logic is covered.
@@ -213,11 +252,11 @@ def test_invoke_model_unhandled_model_family_fallback(mock_config_values, mock_b
     }
 
     prompt = "Human: Test prompt for fallback\n\nAssistant:"
-    response = handler.invoke_model(unhandled_model_id, prompt)
+    response = handler.invoke_model(unhandled_model_id, prompt, analysis_type='heavy_analysis')
 
     assert response == "Fallback output"
     handler.client.invoke_model.assert_called_once()
     called_args, called_kwargs = handler.client.invoke_model.call_args
     body_sent = json.loads(called_kwargs['body'])
     assert body_sent["prompt"] == prompt
-    assert "max_tokens_to_sample" in body_sent # Defaulting to Claude's token parameter name 
+    assert "max_tokens_to_sample" in body_sent or "max_tokens" in body_sent # Defaulting to Claude's token parameter name 

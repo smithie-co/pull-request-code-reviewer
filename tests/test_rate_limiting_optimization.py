@@ -154,9 +154,10 @@ class TestBedrockHandlerIntegration(unittest.TestCase):
     """Test BedrockHandler integration with rate limiter and token calculator."""
     
     @patch('src.bedrock_handler.boto3.client')
-    @patch('src.rate_limiter.get_global_rate_limiter')
-    @patch('src.token_calculator.TokenCalculator.calculate_dynamic_max_tokens')
-    def test_bedrock_handler_rate_limiting(self, mock_calc_tokens, mock_get_limiter, mock_boto_client):
+    @patch('src.bedrock_handler.get_global_rate_limiter')
+    @patch('src.bedrock_handler.get_global_token_budget_manager')
+    @patch('src.bedrock_handler.TokenCalculator.calculate_dynamic_max_tokens')
+    def test_bedrock_handler_rate_limiting(self, mock_calc_tokens, mock_get_budget, mock_get_limiter, mock_boto_client):
         """Test that BedrockHandler uses rate limiter and dynamic tokens."""
         from src.bedrock_handler import BedrockHandler
         
@@ -164,11 +165,18 @@ class TestBedrockHandlerIntegration(unittest.TestCase):
         mock_limiter = Mock()
         mock_limiter.acquire.return_value = True
         mock_get_limiter.return_value = mock_limiter
+        
+        mock_budget = Mock()
+        mock_budget.can_use_tokens.return_value = (True, 5000)
+        mock_budget.record_usage.return_value = None
+        mock_get_budget.return_value = mock_budget
+        
         mock_calc_tokens.return_value = 1500
         
         mock_client = Mock()
-        mock_response = Mock()
-        mock_response.get.return_value.read.return_value = '{"content": [{"type": "text", "text": "Test response"}]}'
+        mock_response_stream = Mock()
+        mock_response_stream.read.return_value = b'{"content": [{"type": "text", "text": "Test response"}]}'
+        mock_response = {'body': mock_response_stream, 'contentType': 'application/json'}
         mock_client.invoke_model.return_value = mock_response
         mock_boto_client.return_value = mock_client
         

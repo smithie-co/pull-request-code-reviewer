@@ -126,14 +126,14 @@ def test_main_successful_flow_with_line_comments(mock_env_vars, mock_event_file,
 
     mock_analysis.generate_review_body.assert_called_once_with(
         summary="Mocked summary.",
-        refined_analysis=None, # None because refined_analysis_results exist
-        heavy_analysis_raw=None  # None because refined_analysis_results exist
+        refined_analysis="Mocked heavy analysis.", # heavy_analysis is passed here always
+        heavy_analysis_raw=None  # None because refined_analysis_results exist (has line comments)
     )
     mock_github.post_pr_review.assert_called_once_with(
         pr_number=123,
         review_body="### AI Review\nMocked PR review body.",
         commit_id="newcommitsha",
-        event='COMMENT', # Default event in main.py for this path
+        event='REQUEST_CHANGES', # Has line comments, so REQUEST_CHANGES
         line_comments=expected_line_comments_for_review
     )
 
@@ -184,14 +184,14 @@ def test_main_no_line_comments_from_analysis(mock_env_vars, mock_event_file, moc
     )
     mock_analysis.generate_review_body.assert_called_once_with(
         summary="Mocked summary.",
-        refined_analysis=None, # Still None, as this arg is for the old string-based refinement
+        refined_analysis="Mocked heavy analysis.", # heavy_analysis is passed here always
         heavy_analysis_raw="Mocked heavy analysis." # Pass raw heavy if refined_analysis_results is empty
     )
     mock_github.post_pr_review.assert_called_once_with(
         pr_number=123,
         review_body=mock.ANY, # Body will be generated based on summary and raw heavy
         commit_id="newcommitsha",
-        event='COMMENT',
+        event='APPROVE', # No line comments, so APPROVE
         line_comments=[] # No line comments to post
     )
 
@@ -281,7 +281,7 @@ def test_main_detailed_analysis_fails(mock_env_vars, mock_event_file, mock_handl
         pr_number=123,
         review_body="Review with summary only due to error",
         commit_id="newcommitsha",
-        event='COMMENT',
+        event='APPROVE', # No line comments if detailed analysis failed
         line_comments=[] # No line comments if detailed analysis failed
     )
 
@@ -350,7 +350,7 @@ def test_main_pr_number_from_issue_comment_event(mock_env_vars, mock_event_file,
         pr_number=123,
         review_body=mock.ANY,
         commit_id="issuecommentprsha",
-        event='COMMENT',
+        event='REQUEST_CHANGES', # Has line comments from mock
         line_comments=mock.ANY # Check if it was called with line_comments kwarg
     )
 

@@ -133,7 +133,7 @@ Assistant:JSON Output:"""
             raw_structured_output = self.bedrock_handler.invoke_model(
                 model_id=deepseek_model_id,
                 prompt=prompt,
-                max_tokens=2048, 
+                analysis_type='structured_extraction',  # Dynamic token calculation
                 temperature=0.3
             )
             
@@ -238,13 +238,13 @@ Assistant: Summary of changes:"""
             summary = self.bedrock_handler.invoke_model(
                 model_id=light_model_id,
                 prompt=prompt,
-                max_tokens=512, # Shorter for summary
+                analysis_type='summary',  # Dynamic token calculation
                 temperature=0.7
             )
             return summary
         except Exception as e:
             logger.error(f"Error during light model summarization (model: {light_model_id}): {e}")
-            raise RuntimeError(f"Light model summarization failed: {e}") from e
+            raise RuntimeError(f"Release notes generation failed: {e}") from e
 
     def generate_review_body(self, summary: str, refined_analysis: Optional[str] = None,
                                heavy_analysis_raw: Optional[str] = None) -> str:
@@ -317,7 +317,7 @@ Assistant:Release notes summary:"""
             summary = self.bedrock_handler.invoke_model(
                 model_id=light_model_id,
                 prompt=prompt,
-                max_tokens=300, # Adjusted for concise release notes
+                analysis_type='release_notes',  # Dynamic token calculation
                 temperature=0.7
             )
             return summary
@@ -368,7 +368,7 @@ Assistant:Analysis for file `{filename}`:"""
             analysis = self.bedrock_handler.invoke_model(
                 model_id=heavy_model_id,
                 prompt=prompt,
-                max_tokens=4000, # Increased from 2048 for potentially larger analysis per file
+                analysis_type='individual_file',  # Dynamic token calculation
                 temperature=0.5  
             )
             return analysis

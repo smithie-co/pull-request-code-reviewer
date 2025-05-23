@@ -391,7 +391,7 @@ def test_post_pr_review_line_comments_truncation_and_overflow(mock_config_github
     assert kwargs["body"] == expected_full_body
     assert kwargs["comments"] == expected_gh_comments_arg
     assert len(kwargs["comments"]) == 50
-    assert kwargs["event"] == "COMMENT" # Default event
+    assert kwargs["event"] is None  # Default event when not specified
 
 def test_post_pr_review_malformed_line_comment_item(mock_config_github, mock_pygithub_client, mock_repo, mock_pr, caplog):
     """Test that malformed line comment items are skipped."""
@@ -435,7 +435,7 @@ def test_post_pr_review_with_explicit_commit_id(mock_config_github, mock_pygithu
     mock_pr.create_review.assert_called_once_with(
         commit=mock_commit_obj,
         body=f"Review for specific commit\n\n{BOT_SIGNATURE}",
-        event="COMMENT", # Default event
+        event=None, # Default event when not specified
         comments=[]
     )
 

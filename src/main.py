@@ -47,6 +47,38 @@ def main():
         configure_global_rate_limiter(requests_per_minute=requests_per_minute, burst_capacity=burst_capacity)
         logger.info(f"Configured rate limiter: {requests_per_minute} req/min, burst: {burst_capacity}")
         logger.info("Note: If hitting token-based rate limits, consider reducing BEDROCK_REQUESTS_PER_MINUTE further.")
+        logger.info("Additional options: ENABLE_INDIVIDUAL_FILE_ANALYSIS=false, MAX_INDIVIDUAL_FILE_THROTTLING_FAILURES=1")
+        logger.info("Token quota options: BEDROCK_CLAUDE_TOKENS_PER_MINUTE, BEDROCK_DEFAULT_TOKENS_PER_MINUTE")
+        logger.info("Quota discovery: DISABLE_QUOTA_DISCOVERY=true (requires servicequotas:ListServiceQuotas permission)")
+        
+        # Configure token budget manager with custom quotas if provided
+        from src.token_calculator import get_global_token_budget_manager
+        token_budget = get_global_token_budget_manager()
+        
+        # Allow override of discovered/default token quotas
+        claude_quota = int(os.getenv("BEDROCK_CLAUDE_TOKENS_PER_MINUTE", "0"))
+        default_quota = int(os.getenv("BEDROCK_DEFAULT_TOKENS_PER_MINUTE", "0"))
+        
+        if claude_quota > 0:
+            # Manual override takes precedence over discovered quotas
+            token_budget.fallback_quotas['claude-3'] = claude_quota
+            token_budget.fallback_quotas['claude-4'] = claude_quota
+            token_budget.fallback_quotas['anthropic.claude'] = claude_quota
+            # Also update cache if it exists
+            if 'claude-3' in token_budget.quota_cache:
+                token_budget.quota_cache['claude-3'] = claude_quota
+            if 'claude-4' in token_budget.quota_cache:
+                token_budget.quota_cache['claude-4'] = claude_quota
+            logger.info(f"Manual override: Set Claude token quota to {claude_quota} tokens/minute")
+        
+        if default_quota > 0:
+            token_budget.fallback_quotas['default'] = default_quota
+            logger.info(f"Manual override: Set default token quota to {default_quota} tokens/minute")
+        
+        # Log current quota configuration
+        logger.info("Current token quota configuration:")
+        for pattern, quota in token_budget.fallback_quotas.items():
+            logger.info(f"  {pattern}: {quota} tokens/minute")
         
         # Initialize handlers
         bedrock_handler = BedrockHandler() # Uses config values by default
@@ -226,12 +258,30 @@ def main():
             logger.info("Skipping refined analysis for line comments as initial heavy analysis was not available or failed.")
         
         # --- Perform Individual File Analysis ---        
-        individual_file_analyses: Dict[str, str] = {}        
-        if changed_files: # Ensure changed_files is populated            
-            logger.info(f"Starting individual analysis for {len(changed_files)} changed files...")            
+        individual_file_analyses: Dict[str, str] = {}
+        
+        # Circuit breaker for individual file analysis when hitting rate limits
+        enable_individual_analysis = os.getenv("ENABLE_INDIVIDUAL_FILE_ANALYSIS", "false").lower() == "true"  # Changed default to false
+        max_throttling_failures = int(os.getenv("MAX_INDIVIDUAL_FILE_THROTTLING_FAILURES", "1"))  # Reduced from 2
+        throttling_failure_count = 0
+        
+        if changed_files and enable_individual_analysis: # Ensure changed_files is populated            
+            logger.info(f"Starting individual analysis for {len(changed_files)} changed files...")
+            logger.info(f"Circuit breaker: Will stop after {max_throttling_failures} throttling failures")
+            
             for index, file_info in enumerate(changed_files):                
                 filename = file_info.get("filename")                
-                file_patch = file_info.get("patch") # This is the diff for the individual file                                
+                file_patch = file_info.get("patch") # This is the diff for the individual file
+                
+                # Check circuit breaker
+                if throttling_failure_count >= max_throttling_failures:
+                    logger.warning(f"Circuit breaker activated: Skipping remaining individual file analyses due to {throttling_failure_count} throttling failures")
+                    remaining_files = len(changed_files) - index
+                    for remaining_index in range(index, len(changed_files)):
+                        remaining_filename = changed_files[remaining_index].get("filename", f"file_{remaining_index}")
+                        individual_file_analyses[remaining_filename] = "⚠️ Analysis skipped due to rate limiting. The main review above covers the key changes."
+                    break
+                                                
                 if filename and file_patch:                    
                     try:                        
                         logger.info(f"Performing analysis for file: {filename} ({index + 1}/{len(changed_files)})")                        
@@ -240,18 +290,41 @@ def main():
                             individual_file_analyses[filename] = file_analysis_result                            
                             logger.info(f"Completed analysis for file: {filename}. Result length: {len(file_analysis_result)}")                        
                         else:                            
-                            logger.info(f"Analysis for file: {filename} returned no content.")                                                
-                        # Add delay between file analyses to spread out API calls                        
+                            logger.info(f"Analysis for file: {filename} returned no content.")
+                            individual_file_analyses[filename] = "No specific analysis generated for this file."
+                        
+                        # Reset throttling failure count on success
+                        throttling_failure_count = 0
+                                                                
+                        # Add progressive delay between file analyses to spread out API calls                        
                         if index < len(changed_files) - 1:  # Don't delay after the last file                            
-                            import time                            
-                            delay_seconds = 1.5  # Configurable delay between file analyses                            
-                            logger.debug(f"Adding {delay_seconds}s delay before analyzing next file")                            
+                            # Progressive delay based on number of files already processed
+                            base_delay = 2.0  # Increased from 1.5
+                            progressive_factor = min(1.0 + (index * 0.1), 3.0)  # Max 3x multiplier
+                            delay_seconds = base_delay * progressive_factor
+                            
+                            logger.debug(f"Adding {delay_seconds:.1f}s delay before analyzing next file")                            
                             time.sleep(delay_seconds)                                            
-                    except Exception as e:                        
-                        logger.error(f"Error during analysis of file {filename}: {e}. This file's analysis will be skipped.")                        
-                        individual_file_analyses[filename] = f"Could not analyze {filename} due to an error: {str(e)}"                
+                    except Exception as e:
+                        # Check if this is a throttling error
+                        if "ThrottlingException" in str(e) and "tokens" in str(e).lower():
+                            throttling_failure_count += 1
+                            logger.warning(f"Throttling failure #{throttling_failure_count} for file {filename}: {e}")
+                            individual_file_analyses[filename] = f"⚠️ Analysis failed due to rate limiting: {str(e)}"
+                            
+                            # Add longer delay after throttling
+                            if index < len(changed_files) - 1:
+                                throttling_delay = min(10.0 + (throttling_failure_count * 5.0), 30.0)  # Up to 30s
+                                logger.info(f"Adding extended {throttling_delay}s delay after throttling failure")
+                                time.sleep(throttling_delay)
+                        else:
+                            logger.error(f"Error during analysis of file {filename}: {e}. This file's analysis will be skipped.")                        
+                            individual_file_analyses[filename] = f"Could not analyze {filename} due to an error: {str(e)}"                
                 elif filename and not file_patch:                    
-                    logger.info(f"Skipping analysis for file {filename} as it has no patch content (e.g., binary, renamed, or mode change only). ")                
+                    logger.info(f"Skipping analysis for file {filename} as it has no patch content (e.g., binary, renamed, or mode change only). ")
+                    individual_file_analyses[filename] = "No changes to analyze (binary file, rename, or mode change only)."
+        elif not enable_individual_analysis:
+            logger.info("Individual file analysis is disabled via ENABLE_INDIVIDUAL_FILE_ANALYSIS=false")                
         else:           
             logger.info("No changed files data available to perform individual file analysis.")
 

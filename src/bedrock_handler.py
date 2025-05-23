@@ -9,7 +9,7 @@ from botocore.exceptions import ClientError, NoCredentialsError, PartialCredenti
 
 from src import config
 from src.rate_limiter import get_global_rate_limiter
-from src.token_calculator import TokenCalculator
+from src.token_calculator import TokenCalculator, get_global_token_budget_manager
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -319,6 +319,19 @@ class BedrockHandler:
         # Get rate limiter
         rate_limiter = get_global_rate_limiter()
         
+        # Get token budget manager
+        token_budget = get_global_token_budget_manager()
+        
+        # Check if we can use the requested tokens without exceeding quota
+        can_proceed, available_tokens = token_budget.can_use_tokens(model_id, max_tokens)
+        if not can_proceed:
+            quota = token_budget.get_quota_for_model(model_id)
+            current_usage = token_budget.get_current_usage(model_id)
+            logger.warning(f"Token budget exceeded for {model_id}. Current usage: {current_usage}/{quota}, requested: {max_tokens}, available: {available_tokens}")
+            raise RuntimeError(f"Token quota exceeded for {model_id}. Current usage: {current_usage}/{quota} tokens per minute. Please wait before making more requests.")
+        
+        logger.info(f"Token budget check passed for {model_id}: {max_tokens} tokens requested, {available_tokens} available")
+        
         logger.info(f"Invoking Bedrock model: {model_id} with prompt (first 80 chars): {prompt[:80].replace('\n', ' ')}...")
         logger.debug(f"Full prompt for {model_id}:\n{prompt}")
         logger.debug(f"Invocation params for {model_id}: max_tokens={max_tokens}, temp={temperature}, top_p={top_p}, top_k={top_k}")
@@ -359,6 +372,10 @@ class BedrockHandler:
                     raise RuntimeError(f"Model {model_id} returned no valid string text. Check logs. Full response: {response_body_json}")
 
                 logger.info(f"Model {model_id} invocation successful. Output (first 80 chars): {generated_text[:80].replace('\n', ' ')}...")
+                
+                # Record token usage for budget tracking
+                token_budget.record_usage(model_id, max_tokens)
+                
                 return generated_text.strip()
 
             except ClientError as e:
