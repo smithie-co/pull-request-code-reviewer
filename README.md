@@ -15,33 +15,37 @@ This project provides a GitHub Action that leverages AI, specifically AWS Bedroc
 
 The following diagram illustrates the automated pull request review process:
 
-    ```mermaid
-    graph TD
-        A[PR Event in User Repo: Opened, Reopened, Synchronize] --> B{Calling Workflow};
-        B -- Invokes with Inputs & Env Secrets --> C[Custom Action: action.yml in YOUR_ORG/pull-request-code-reviewer];
-        C --> D[1. Checkout Action Code & Setup Python];
-        D --> E[2. Install Dependencies from requirements.txt];
-        E --> F[3. Execute Python Script: src/main.py];
+```mermaid
+graph TD
+    A[PR Event: Opened/Reopened/Synchronize] --> B[Calling Workflow]
+    B --> C[Custom Action: pull-request-code-reviewer]
+    C --> D[Checkout & Setup Python]
+    D --> E[Install Dependencies]
+    E --> F[Execute src/main.py]
 
-        subgraph "Python Application Logic (src/)"
-            F --> G["a. Load Configuration (config.py):<br>- Workflow inputs (AWS region, model IDs)<br>- Env Vars (AWS Keys, GitHub Token)"];
-            G --> H["b. Initialize Handlers:<br>- GithubHandler (for GitHub API)<br>- BedrockHandler (for AWS Bedrock API)"];
-            H --> I["c. GithubHandler: Fetch PR Details<br>- Diff, changed files, metadata using GITHUB_TOKEN"];
-            I --> J[d. AnalysisService: Orchestrate Review];
-            J -- Uses light_model_id --> K[BedrockHandler: Request Change Summary];
-            K -- Invokes --> L[AWS Bedrock];
-            J -- Uses heavy_model_id --> M[BedrockHandler: Request Detailed Code Analysis];
-            M -- Invokes --> L;
-            J -- Uses deepseek_model_id --> N[BedrockHandler: Request Analysis Refinement];
-            N -- Invokes --> L;
-            O["e. Compile Review:<br>- Summary<br>- Detailed Findings<br>- Refinements"];
-            K --> O;
-            M --> O;
-            N --> O;
-            O --> P[f. GithubHandler: Post Formatted Comment to PR];
-        end
-        P --> Q[Review Comment Appears on PR];
-    ```
+    subgraph "Python Application Logic"
+        F --> G[Load Configuration]
+        G --> H[Initialize Handlers]
+        H --> I[Fetch PR Details]
+        I --> J[AnalysisService: Orchestrate Review]
+        
+        J --> K[Light Model: Summary]
+        J --> M[Heavy Model: Detailed Analysis]
+        J --> N[DeepSeek Model: Refinement]
+        
+        K --> L[AWS Bedrock]
+        M --> L
+        N --> L
+        
+        K --> O[Compile Review]
+        M --> O
+        N --> O
+        
+        O --> P[Post Comment to PR]
+    end
+    
+    P --> Q[Review Comment Appears]
+```
 
 ## Technical Overview
 
