@@ -1,0 +1,6 @@
+PyGithub
+boto3
+python-dotenv
+pytest
+tree-sitter 
+pytest-mock

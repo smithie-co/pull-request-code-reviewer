@@ -1,0 +1,54 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+## AWS Bedrock Best Practices
+
+When using AWS Bedrock for language model interactions, adhere to the following best practices:
+
+1.  **Credentials Management:**
+    *   Use IAM roles for EC2 instances or ECS tasks/Lambda functions running the GitHub Action if possible. This is the most secure way to grant permissions.
+    *   If using access keys, ensure they are passed securely via GitHub secrets and have the minimum necessary permissions for Bedrock (`bedrock:InvokeModel`).
+    *   Do not hardcode credentials in the source code.
+    *   Store them as environment variables, injected by the GitHub Actions workflow.
+
+2.  **Model Selection:**
+    *   Choose the appropriate model for the task (e.g., `HEAVY_MODEL` for deep analysis, `LIGHT_MODEL` for summarization).
+    *   Be aware of model capabilities, context window sizes, and pricing.
+    *   The specific model IDs (`anthropic.claude-v2`, `amazon.titan-text-lite-v1`, etc.) will be passed via environment variables.
+
+3.  **Error Handling and Retries:**
+    *   Implement robust error handling for Bedrock API calls (`InvokeModel`).
+    *   Handle common exceptions like `AccessDeniedException`, `ResourceNotFoundException`, `ThrottlingException`, `ModelTimeoutException`, `InternalServerException`, `ValidationException`.
+    *   Implement retry mechanisms with exponential backoff and jitter for transient errors (e.g., `ThrottlingException`, `ModelTimeoutException`). `boto3` has built-in retry capabilities that can be configured.
+
+4.  **Prompt Engineering:**
+    *   Craft clear, specific, and concise prompts for the models.
+    *   Provide sufficient context within the prompt.
+    *   For code analysis, clearly delineate the code snippet within the prompt.
+    *   Iterate on prompt design to achieve desired output quality.
+
+5.  **Invocation Parameters:**
+    *   Understand and correctly use invocation parameters like `max_tokens_to_sample` (for Anthropic models) or `maxTokenCount` (for Amazon Titan models), `temperature`, `top_p`, `top_k`, and stop sequences.
+    *   Adjust these parameters based on the desired output (e.g., lower temperature for more deterministic output, higher for more creative output).
+    *   Ensure the `contentType` is set to `application/json` and the `accept` header is also `application/json`.
+    *   The `body` of the request must be a JSON string, structured according to the specific model's requirements.
+
+6.  **Logging and Monitoring:**
+    *   Log relevant information for Bedrock API calls, such as request IDs, model IDs used, and prompt lengths (be mindful of PII or sensitive data in prompts).
+    *   Monitor Bedrock usage and costs through AWS Cost Explorer and CloudWatch metrics if applicable.
+
+7.  **Security:**
+    *   Be mindful of data sent to models. Avoid sending sensitive or personally identifiable information (PII) if not strictly necessary and appropriately handled.
+    *   If dealing with sensitive data, consult AWS documentation on data protection with Bedrock.
+
+8.  **Efficiency:**
+    *   For batch processing or repeated similar requests, consider if any optimizations can be made (though Bedrock is a managed service, prompt efficiency still matters).
+    *   Ensure your application cleans up Boto3 clients if necessary, though in a short-lived script/Action, this is less critical.
+
+By following these practices, you can build a more robust, secure, and efficient integration with AWS Bedrock.
+
+
+
+
